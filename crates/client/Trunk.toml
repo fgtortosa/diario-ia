@@ -1,0 +1,11 @@
+[build]
+# URLs absolutas para que los assets funcionen tambien en rutas profundas
+# como /entry/42 (history routing con fallback a index.html).
+public_url = "/"
+dist = "dist"
+
+[serve]
+# En desarrollo, proxy de la API al servidor central (cargo run -- serve).
+[[proxy]]
+backend = "http://127.0.0.1:8787/api/v1"
+rewrite = "/api/v1/"

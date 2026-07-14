@@ -1,0 +1,18 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+
+# Build output de la SPA (se regenera con trunk)
+/crates/client/dist/*
+!/crates/client/dist/.gitkeep
+
+# Base de datos local
+*.db
+*.db-shm
+*.db-wal
+/data
+
+# Editor
+.DS_Store
+.idea
+.vscode

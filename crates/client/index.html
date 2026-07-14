@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Diario-IA</title>
+    <link data-trunk rel="rust" data-wasm-opt="0" />
+    <link data-trunk rel="copy-dir" href="assets" />
+    <link data-trunk rel="css" href="styles.css" />
+    <link rel="stylesheet" href="/assets/hljs-light.css" media="(prefers-color-scheme: light)" />
+    <link rel="stylesheet" href="/assets/hljs-dark.css" media="(prefers-color-scheme: dark)" />
+    <script src="/assets/mermaid.min.js"></script>
+    <script src="/assets/highlight.min.js"></script>
+    <script>
+      // Renderiza diagramas mermaid y resalta el codigo en el HTML recien
+      // inyectado por la SPA. Se invoca desde Rust (window.__renderDiagrams).
+      window.__renderDiagrams = function () {
+        requestAnimationFrame(function () {
+          try {
+            document
+              .querySelectorAll("code.language-mermaid")
+              .forEach(function (code) {
+                var host = code.closest("pre") || code;
+                var div = document.createElement("div");
+                div.className = "mermaid";
+                div.textContent = code.textContent; // textContent desescapa entidades
+                host.replaceWith(div);
+              });
+            if (window.mermaid) {
+              var dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+              window.mermaid.initialize({
+                startOnLoad: false,
+                theme: dark ? "dark" : "default",
+                securityLevel: "strict",
+              });
+              var nodes = document.querySelectorAll(".mermaid:not([data-processed])");
+              if (nodes.length) window.mermaid.run({ nodes: nodes });
+            }
+          } catch (e) {
+            console.error("mermaid:", e);
+          }
+          try {
+            if (window.hljs) {
+              document
+                .querySelectorAll("pre code:not(.language-mermaid)")
+                .forEach(function (block) {
+                  if (!block.dataset.highlighted) {
+                    window.hljs.highlightElement(block);
+                  }
+                });
+            }
+          } catch (e) {
+            console.error("hljs:", e);
+          }
+        });
+      };
+    </script>
+  </head>
+  <body></body>
+</html>
