@@ -32,6 +32,8 @@ pub struct Store {
 pub struct KeyInfo {
     pub id: i64,
     pub name: String,
+    /// Reservado para futura comprobacion de permisos por scope.
+    #[allow(dead_code)]
     pub scope: String,
 }
 
@@ -56,7 +58,8 @@ impl Store {
         Ok(store)
     }
 
-    /// Base de datos en memoria (para tests). Un unico conexion compartida.
+    /// Base de datos en memoria (para tests). Una unica conexion compartida.
+    #[cfg(test)]
     pub fn in_memory() -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::memory().with_init(init_conn);
         let pool = r2d2::Pool::builder()
