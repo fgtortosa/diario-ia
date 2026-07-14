@@ -52,7 +52,9 @@ impl Store {
     /// Abre (o crea) la base de datos en la ruta indicada.
     pub fn open(path: &str) -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::file(path).with_init(init_conn);
-        let pool = r2d2::Pool::builder().build(manager)?;
+        // Solo 1 conexion ociosa al arrancar: evita que 10 conexiones intenten
+        // convertir la BD nueva a WAL en paralelo. El pool crece bajo demanda.
+        let pool = r2d2::Pool::builder().min_idle(Some(1)).build(manager)?;
         let store = Store { pool };
         store.migrate()?;
         Ok(store)
@@ -472,10 +474,12 @@ impl Store {
 // --------------------------------------------------------------- utilidades
 
 fn init_conn(conn: &mut rusqlite::Connection) -> rusqlite::Result<()> {
+    // busy_timeout PRIMERO: si varias conexiones convierten la BD a WAL a la vez,
+    // esperan al bloqueo en lugar de fallar con "database is locked".
     conn.execute_batch(
-        "PRAGMA journal_mode = WAL;
+        "PRAGMA busy_timeout = 5000;
+         PRAGMA journal_mode = WAL;
          PRAGMA foreign_keys = ON;
-         PRAGMA busy_timeout = 5000;
          PRAGMA synchronous = NORMAL;",
     )
 }

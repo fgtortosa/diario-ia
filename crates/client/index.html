@@ -4,6 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Diario-IA</title>
+    <!-- wasm-opt="0" (desactivado): el wasm-opt que trae trunk no acepta las
+         operaciones bulk-memory que emite Rust moderno. wasm-bindgen ya reduce
+         el WASM a ~270 KB, asi que la optimizacion extra no es necesaria. -->
     <link data-trunk rel="rust" data-wasm-opt="0" />
     <link data-trunk rel="copy-dir" href="assets" />
     <link data-trunk rel="css" href="styles.css" />
