@@ -16,6 +16,7 @@ use crate::error::{AppError, AppResult};
 use crate::render;
 
 const MIGRATION_0001: &str = include_str!("../../../migrations/0001_init.sql");
+const MIGRATION_0002: &str = include_str!("../../../migrations/0002_export.sql");
 
 /// Separador de unidad (US) usado para agrupar tags con group_concat.
 const TAG_SEP: char = '\u{1f}';
@@ -75,6 +76,12 @@ impl Store {
     fn migrate(&self) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         conn.execute_batch(MIGRATION_0001)?;
+        // 0002 no es idempotente: ALTER TABLE ADD COLUMN falla si la columna ya
+        // existe. Se comprueba antes en vez de tragarse el error, para no ocultar
+        // fallos reales de la migracion.
+        if !tiene_columna(&conn, "application", "repo_path")? {
+            conn.execute_batch(MIGRATION_0002)?;
+        }
         Ok(())
     }
 
@@ -524,6 +531,15 @@ pub fn slugify(input: &str) -> String {
     }
 }
 
+fn tiene_columna(conn: &rusqlite::Connection, tabla: &str, columna: &str) -> anyhow::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        params![tabla, columna],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 fn generate_token() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 24];
@@ -578,6 +594,36 @@ mod tests {
         assert_eq!(slugify("Portal Alumnos"), "portal-alumnos");
         assert_eq!(slugify("  UACloud 2026!! "), "uacloud-2026");
         assert_eq!(slugify("///"), "sin-nombre");
+    }
+
+    #[test]
+    fn migracion_0002_anade_las_columnas_de_exportacion() {
+        let store = Store::in_memory().unwrap();
+        let conn = store.pool.get().unwrap();
+
+        let cols_app: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('application')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(cols_app.contains(&"repo_path".to_string()));
+
+        let cols_entry: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('entry')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(cols_entry.contains(&"exported_at".to_string()));
+    }
+
+    #[test]
+    fn migrar_dos_veces_no_falla() {
+        let store = Store::in_memory().unwrap();
+        store.migrate().unwrap();
     }
 
     #[test]
