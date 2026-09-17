@@ -10,6 +10,7 @@
 
 use crate::storage::Store;
 use diario_shared::Entry;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// `20260917-125851-redes-ice-netcore-19.md`
@@ -58,8 +59,15 @@ pub fn markdown_de(entry: &Entry) -> String {
 /// siguiente llamada arrastra lo atrasado sin que nadie intervenga.
 pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::Result<usize> {
     let mut marcadas = 0usize;
+    let mut despues_de = None;
 
-    for entrada in store.entradas_pendientes(200)? {
+    loop {
+        let pendientes = store.entradas_pendientes_despues(200, despues_de)?;
+        if pendientes.is_empty() {
+            break;
+        }
+        for entrada in pendientes {
+            despues_de = Some(entrada.id);
         let mut destinos: Vec<PathBuf> = Vec::new();
 
         if let Some(repo) = store.repo_path_de_slug(&entrada.application_slug)? {
@@ -87,8 +95,9 @@ let mut todos_ok = !destinos.is_empty();
         // Se marca solo si TODOS los destinos fueron bien. Si uno falla, la
         // entrada sigue pendiente y se reintenta entera.
         if todos_ok {
-            store.marcar_exportada(entrada.id, chrono::Utc::now())?;
-            marcadas += 1;
+                store.marcar_exportada(entrada.id, chrono::Utc::now())?;
+                marcadas += 1;
+            }
         }
     }
 
@@ -106,8 +115,34 @@ fn escribir_si_no_existe(dir: &Path, nombre: &str, cuerpo: &str) -> anyhow::Resu
     if destino.exists() {
         return Ok(());
     }
-    std::fs::write(&destino, cuerpo)?;
-    Ok(())
+    let temporal = dir.join(format!(".{nombre}.{}.tmp", uuid::Uuid::new_v4()));
+    let resultado = (|| -> std::io::Result<()> {
+        let mut fichero = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporal)?;
+        fichero.write_all(cuerpo.as_bytes())?;
+        fichero.sync_all()?;
+        drop(fichero);
+        // hard_link publica sin reemplazar: si otro escritor ya creó el
+        // destino, falla con AlreadyExists en vez de modificarlo.
+        std::fs::hard_link(&temporal, &destino)?;
+        Ok(())
+    })();
+    match resultado {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&temporal);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            let _ = std::fs::remove_file(&temporal);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temporal);
+            Err(e.into())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -222,8 +257,9 @@ mod tests {
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
         store.create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now()).unwrap();
-        // Un caracter que Windows no admite en una ruta: create_dir_all falla.
-        store.set_repo_path("mi-app", Some("Z:/no/exi<>ste")).unwrap();
+        // Un hijo bajo un fichero existente falla en todos los sistemas.
+        let archivo = tempfile::NamedTempFile::new().unwrap();
+        store.set_repo_path("mi-app", Some(archivo.path().to_str().unwrap())).unwrap();
 
         let n = exportar_pendientes(&store, central.path().to_str()).unwrap();
 
@@ -267,6 +303,18 @@ mod tests {
 
         assert_eq!(exportar_pendientes(&store, central.path().to_str()).unwrap(), 3);
         assert_eq!(cuantos(central.path()), 3);
+    }
+
+    #[test]
+    fn drena_mas_de_un_lote_de_pendientes() {
+        let central = tempfile::tempdir().unwrap();
+        let store = Store::in_memory().unwrap();
+        for i in 0..201 {
+            store.create_entry(&nueva("mi-app", &format!("Titulo {i}")), chrono::Utc::now()).unwrap();
+        }
+
+        assert_eq!(exportar_pendientes(&store, central.path().to_str()).unwrap(), 201);
+        assert!(store.entradas_pendientes(1).unwrap().is_empty());
     }
 
     #[test]

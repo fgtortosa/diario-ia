@@ -65,7 +65,7 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="app">
             <Header search=search selected_tag=selected_tag />
-            <Sidebar apps=apps selected_app=selected_app from=from to=to />
+            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag />
             <main class="main">
                 {move || match view.get() {
                     View::List => view! { <Timeline entries=entries loading=loading view=view selected_tag=selected_tag /> }.into_any(),
@@ -106,6 +106,7 @@ fn Sidebar(
     selected_app: RwSignal<Option<String>>,
     from: RwSignal<String>,
     to: RwSignal<String>,
+    selected_tag: RwSignal<Option<String>>,
 ) -> impl IntoView {
     view! {
         <aside class="sidebar">
@@ -157,6 +158,7 @@ fn Sidebar(
                         selected_app.set(None);
                         from.set(String::new());
                         to.set(String::new());
+                        selected_tag.set(None);
                     }
                 >
                     "Limpiar filtros"

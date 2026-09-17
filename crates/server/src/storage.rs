@@ -76,11 +76,30 @@ impl Store {
     fn migrate(&self) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         conn.execute_batch(MIGRATION_0001)?;
-        // 0002 no es idempotente: ALTER TABLE ADD COLUMN falla si la columna ya
-        // existe. Se comprueba antes en vez de tragarse el error, para no ocultar
-        // fallos reales de la migracion.
-        if !tiene_columna(&conn, "application", "repo_path")? {
+        let tiene_repo_path = tiene_columna(&conn, "application", "repo_path")?;
+        let tiene_exported_at = tiene_columna(&conn, "entry", "exported_at")?;
+        if !tiene_repo_path && !tiene_exported_at {
             conn.execute_batch(MIGRATION_0002)?;
+        } else {
+            // Una interrupcion entre los dos ALTER deja una migracion parcial.
+            // Se completa solo la columna que falte sin volver a marcar entradas.
+            if !tiene_repo_path {
+                conn.execute_batch("ALTER TABLE application ADD COLUMN repo_path TEXT;")?;
+            }
+            if !tiene_exported_at {
+                conn.execute_batch("ALTER TABLE entry ADD COLUMN exported_at TEXT;")?;
+            }
+            // El indice es el marcador de que la fase final (marcado de las
+            // entradas heredadas) termino. Si falta, se completa sin afectar
+            // a entradas nuevas: no podia haberse creado ninguna antes de que
+            // Store::open terminara la migracion.
+            if !tiene_indice(&conn, "idx_entry_pendiente")? {
+                conn.execute_batch(
+                    "UPDATE entry SET exported_at = datetime('now') WHERE exported_at IS NULL;
+                     CREATE INDEX IF NOT EXISTS idx_entry_pendiente
+                       ON entry(exported_at) WHERE exported_at IS NULL;",
+                )?;
+            }
         }
         Ok(())
     }
@@ -123,13 +142,25 @@ impl Store {
     /// get_entry pide su propia conexion del pool y mantener abierto el
     /// statement mientras tanto agotaria el pool con una sola conexion.
     pub fn entradas_pendientes(&self, limite: usize) -> AppResult<Vec<Entry>> {
+        self.entradas_pendientes_despues(limite, None)
+    }
+
+    /// Entradas pendientes posteriores a un id. Permite recorrer la cola sin
+    /// que las entradas que fallan bloqueen las siguientes.
+    pub fn entradas_pendientes_despues(
+        &self,
+        limite: usize,
+        despues_de: Option<i64>,
+    ) -> AppResult<Vec<Entry>> {
         let ids: Vec<i64> = {
             let conn = self.pool.get()?;
             let mut st = conn.prepare(
-                "SELECT id FROM entry WHERE exported_at IS NULL ORDER BY id ASC LIMIT ?1",
+                "SELECT id FROM entry
+                 WHERE exported_at IS NULL AND (?1 IS NULL OR id > ?1)
+                 ORDER BY id ASC LIMIT ?2",
             )?;
             let filas = st
-                .query_map(params![limite as i64], |r| r.get(0))?
+                .query_map(params![despues_de, limite as i64], |r| r.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
             filas
         };
@@ -622,6 +653,17 @@ fn tiene_columna(conn: &rusqlite::Connection, tabla: &str, columna: &str) -> any
         |r| r.get(0),
     )?;
     Ok(n > 0)
+}
+
+fn tiene_indice(conn: &rusqlite::Connection, indice: &str) -> anyhow::Result<bool> {
+    Ok(conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            [indice],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
 }
 
 fn generate_token() -> String {
