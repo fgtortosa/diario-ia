@@ -44,7 +44,7 @@ pub fn App() -> impl IntoView {
     });
 
     // Recarga las entradas cuando cambia cualquier filtro.
-    Effect::new(move |_| {
+    Effect::new(move |anterior: Option<()>| {
         let f = EntryFilters {
             application: selected_app.get(),
             from: from.get(),
@@ -52,6 +52,24 @@ pub fn App() -> impl IntoView {
             search: search.get(),
             tag: selected_tag.get(),
         };
+
+        // Al cambiar un filtro se vuelve al listado. Los resultados solo se
+        // pintan en View::List, asi que desde el detalle se filtraba a ciegas:
+        // la barra lateral y las fechas funcionaban, pero no se veia nada y
+        // parecia que estaban rotas.
+        //
+        // La guarda 'anterior.is_some()' no es cosmetica: este Effect tambien
+        // corre al montar, y sin ella un enlace directo a /entry/N rebotaria al
+        // listado antes de que se llegara a ver la entrada.
+        //
+        // view se lee sin rastrear a proposito: rastrearlo haria que el Effect
+        // se reejecutara al cambiar de vista y, con el set de aqui dentro, seria
+        // un bucle.
+        if anterior.is_some() && !matches!(view.get_untracked(), View::List) {
+            push_path("/");
+            view.set(View::List);
+        }
+
         loading.set(true);
         spawn_local(async move {
             match api::fetch_entries(f).await {
