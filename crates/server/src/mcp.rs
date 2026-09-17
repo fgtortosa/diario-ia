@@ -7,7 +7,9 @@
 use rmcp::handler::server::{router::tool::ToolRouter, wrapper::Parameters};
 use rmcp::model::{CallToolResult, Content, ServerCapabilities, ServerInfo};
 use rmcp::transport::stdio;
-use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt};
+use rmcp::{
+    schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler, ServiceExt,
+};
 
 use diario_shared::{CreatedEntry, NewEntry};
 
@@ -84,8 +86,10 @@ impl DiarioMcp {
         format!("{}{}", self.base_url, path)
     }
 
-    #[tool(description = "Registra una tarea realizada por el agente en el diario \
-        (aplicacion, prompt, resumen y respuesta/documento markdown).")]
+    #[tool(
+        description = "Registra una tarea realizada por el agente en el diario \
+        (aplicacion, prompt, resumen y respuesta/documento markdown)."
+    )]
     async fn log_task(
         &self,
         Parameters(a): Parameters<LogTaskArgs>,
@@ -105,7 +109,11 @@ impl DiarioMcp {
             duration_ms: None,
             metadata: None,
         };
-        let mut req = self.http.post(self.url("/api/v1/entries")).json(&body).header(ORIGEN, "mcp");
+        let mut req = self
+            .http
+            .post(self.url("/api/v1/entries"))
+            .json(&body)
+            .header(ORIGEN, "mcp");
         if let Some(k) = &self.api_key {
             req = req.bearer_auth(k);
         }
@@ -131,8 +139,10 @@ impl DiarioMcp {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(description = "Lista entradas del diario, opcionalmente filtradas por \
-        aplicacion y rango de fechas, para recuperar trabajo previo.")]
+    #[tool(
+        description = "Lista entradas del diario, opcionalmente filtradas por \
+        aplicacion y rango de fechas, para recuperar trabajo previo."
+    )]
     async fn list_entries(
         &self,
         Parameters(a): Parameters<ListEntriesArgs>,
@@ -150,7 +160,11 @@ impl DiarioMcp {
         if let Some(v) = a.limit {
             query.push(("limit".into(), v.to_string()));
         }
-        let mut req = self.http.get(self.url("/api/v1/entries")).query(&query).header(ORIGEN, "mcp");
+        let mut req = self
+            .http
+            .get(self.url("/api/v1/entries"))
+            .query(&query)
+            .header(ORIGEN, "mcp");
         if let Some(k) = &self.api_key {
             req = req.bearer_auth(k);
         }
@@ -164,9 +178,7 @@ impl DiarioMcp {
         &self,
         Parameters(a): Parameters<GetEntryArgs>,
     ) -> Result<CallToolResult, McpError> {
-        let json = self
-            .get_json(&format!("/api/v1/entries/{}", a.id))
-            .await?;
+        let json = self.get_json(&format!("/api/v1/entries/{}", a.id)).await?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
@@ -265,7 +277,10 @@ mod tests {
         let apps_text = format!("{:?}", apps.content);
         assert!(apps_text.contains("portal-alumnos"), "apps: {apps_text}");
 
-        let entry = mcp.get_entry(Parameters(GetEntryArgs { id: 1 })).await.unwrap();
+        let entry = mcp
+            .get_entry(Parameters(GetEntryArgs { id: 1 }))
+            .await
+            .unwrap();
         let entry_text = format!("{:?}", entry.content);
         assert!(entry_text.contains("Tarea via MCP"));
     }

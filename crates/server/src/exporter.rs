@@ -22,12 +22,14 @@ use std::path::{Path, PathBuf};
 pub fn nombre_fichero(entry: &Entry) -> String {
     format!(
         "{}-{}-{}.md",
-        entry.created_at.with_timezone(&Local).format("%Y%m%d-%H%M%S"),
+        entry
+            .created_at
+            .with_timezone(&Local)
+            .format("%Y%m%d-%H%M%S"),
         entry.application_slug,
         entry.id
     )
 }
-
 
 /// Escribe todas las entradas pendientes y devuelve cuantas se marcaron.
 ///
@@ -45,33 +47,33 @@ pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::R
         }
         for entrada in pendientes {
             despues_de = Some(entrada.id);
-        let mut destinos: Vec<PathBuf> = Vec::new();
+            let mut destinos: Vec<PathBuf> = Vec::new();
 
-        if let Some(repo) = store.repo_path_de_slug(&entrada.application_slug)? {
-            destinos.push(Path::new(&repo).join("diario-ia"));
-        }
-        if let Some(central) = tareas_dir.filter(|t| !t.is_empty()) {
-            destinos.push(PathBuf::from(central));
-        }
-
-        let nombre = nombre_fichero(&entrada);
-        let cuerpo = markdown_de(&entrada);
-
-let mut todos_ok = !destinos.is_empty();
-        for dir in &destinos {
-            if let Err(e) = escribir_si_no_existe(dir, &nombre, &cuerpo) {
-                tracing::warn!(
-                    "no se pudo exportar la entrada {} a {}: {e}",
-                    entrada.id,
-                    dir.display()
-                );
-                todos_ok = false;
+            if let Some(repo) = store.repo_path_de_slug(&entrada.application_slug)? {
+                destinos.push(Path::new(&repo).join("diario-ia"));
             }
-        }
+            if let Some(central) = tareas_dir.filter(|t| !t.is_empty()) {
+                destinos.push(PathBuf::from(central));
+            }
 
-        // Se marca solo si TODOS los destinos fueron bien. Si uno falla, la
-        // entrada sigue pendiente y se reintenta entera.
-        if todos_ok {
+            let nombre = nombre_fichero(&entrada);
+            let cuerpo = markdown_de(&entrada);
+
+            let mut todos_ok = !destinos.is_empty();
+            for dir in &destinos {
+                if let Err(e) = escribir_si_no_existe(dir, &nombre, &cuerpo) {
+                    tracing::warn!(
+                        "no se pudo exportar la entrada {} a {}: {e}",
+                        entrada.id,
+                        dir.display()
+                    );
+                    todos_ok = false;
+                }
+            }
+
+            // Se marca solo si TODOS los destinos fueron bien. Si uno falla, la
+            // entrada sigue pendiente y se reintenta entera.
+            if todos_ok {
                 store.marcar_exportada(entrada.id, chrono::Utc::now())?;
                 marcadas += 1;
             }
@@ -146,7 +148,9 @@ mod tests {
             tokens_output: None,
             duration_ms: None,
             metadata: None,
-            created_at: chrono::Utc.with_ymd_and_hms(2026, 9, 17, 12, 58, 51).unwrap(),
+            created_at: chrono::Utc
+                .with_ymd_and_hms(2026, 9, 17, 12, 58, 51)
+                .unwrap(),
             exported_at: None,
             attachments: vec![],
         }
@@ -216,8 +220,12 @@ mod tests {
         let repo = tempfile::tempdir().unwrap();
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
-        store.create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now()).unwrap();
-        store.set_repo_path("mi-app", Some(repo.path().to_str().unwrap())).unwrap();
+        store
+            .create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now())
+            .unwrap();
+        store
+            .set_repo_path("mi-app", Some(repo.path().to_str().unwrap()))
+            .unwrap();
 
         let n = exportar_pendientes(&store, central.path().to_str()).unwrap();
 
@@ -231,7 +239,9 @@ mod tests {
     fn sin_repo_path_escribe_solo_en_el_central() {
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
-        store.create_entry(&nueva("sin-repo", "Titulo"), chrono::Utc::now()).unwrap();
+        store
+            .create_entry(&nueva("sin-repo", "Titulo"), chrono::Utc::now())
+            .unwrap();
 
         let n = exportar_pendientes(&store, central.path().to_str()).unwrap();
 
@@ -243,10 +253,14 @@ mod tests {
     fn un_repo_path_invalido_deja_la_entrada_pendiente() {
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
-        store.create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now()).unwrap();
+        store
+            .create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now())
+            .unwrap();
         // Un hijo bajo un fichero existente falla en todos los sistemas.
         let archivo = tempfile::NamedTempFile::new().unwrap();
-        store.set_repo_path("mi-app", Some(archivo.path().to_str().unwrap())).unwrap();
+        store
+            .set_repo_path("mi-app", Some(archivo.path().to_str().unwrap()))
+            .unwrap();
 
         let n = exportar_pendientes(&store, central.path().to_str()).unwrap();
 
@@ -285,10 +299,15 @@ mod tests {
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
         for i in 0..3 {
-            store.create_entry(&nueva("mi-app", &format!("Titulo {i}")), chrono::Utc::now()).unwrap();
+            store
+                .create_entry(&nueva("mi-app", &format!("Titulo {i}")), chrono::Utc::now())
+                .unwrap();
         }
 
-        assert_eq!(exportar_pendientes(&store, central.path().to_str()).unwrap(), 3);
+        assert_eq!(
+            exportar_pendientes(&store, central.path().to_str()).unwrap(),
+            3
+        );
         assert_eq!(cuantos(central.path()), 3);
     }
 
@@ -297,10 +316,15 @@ mod tests {
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
         for i in 0..201 {
-            store.create_entry(&nueva("mi-app", &format!("Titulo {i}")), chrono::Utc::now()).unwrap();
+            store
+                .create_entry(&nueva("mi-app", &format!("Titulo {i}")), chrono::Utc::now())
+                .unwrap();
         }
 
-        assert_eq!(exportar_pendientes(&store, central.path().to_str()).unwrap(), 201);
+        assert_eq!(
+            exportar_pendientes(&store, central.path().to_str()).unwrap(),
+            201
+        );
         assert!(store.entradas_pendientes(1).unwrap().is_empty());
     }
 
@@ -308,8 +332,12 @@ mod tests {
     fn sin_directorio_central_no_escribe_destino_central() {
         let repo = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
-        store.create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now()).unwrap();
-        store.set_repo_path("mi-app", Some(repo.path().to_str().unwrap())).unwrap();
+        store
+            .create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now())
+            .unwrap();
+        store
+            .set_repo_path("mi-app", Some(repo.path().to_str().unwrap()))
+            .unwrap();
 
         assert_eq!(exportar_pendientes(&store, None).unwrap(), 1);
         assert_eq!(cuantos(&repo.path().join("diario-ia")), 1);

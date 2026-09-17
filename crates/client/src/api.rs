@@ -4,7 +4,9 @@ use diario_shared::{Application, Entry, EntryPage, TagCount};
 use gloo_net::http::Request;
 
 fn enc(s: &str) -> String {
-    js_sys::encode_uri_component(s).as_string().unwrap_or_default()
+    js_sys::encode_uri_component(s)
+        .as_string()
+        .unwrap_or_default()
 }
 
 pub async fn fetch_tags() -> Result<Vec<TagCount>, String> {

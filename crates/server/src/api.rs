@@ -9,7 +9,8 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use diario_shared::{
-    Application, CreatedEntry, DayCount, Entry, EntryPage, EntryQuery, NewEntry, TagCount,};
+    Application, CreatedEntry, DayCount, Entry, EntryPage, EntryQuery, NewEntry, TagCount,
+};
 
 use crate::auth::{require_viewer, require_write_key};
 use crate::error::{AppError, AppResult};
@@ -63,9 +64,11 @@ async fn set_exported(
 ) -> AppResult<Json<serde_json::Value>> {
     let store = state.store.clone();
     let existe = blocking(move || store.marcar_exportacion_manual(id, cuerpo.exported)).await?;
-    state
-        .config
-        .traza("rest", "marcar_exportacion", &format!("id={id} exportada={}", cuerpo.exported));
+    state.config.traza(
+        "rest",
+        "marcar_exportacion",
+        &format!("id={id} exportada={}", cuerpo.exported),
+    );
     if !existe {
         return Err(AppError::NotFound);
     }
@@ -73,13 +76,18 @@ async fn set_exported(
     if !cuerpo.exported {
         state.avisar_exportador.notify_one();
     }
-    Ok(Json(serde_json::json!({ "id": id, "exported": cuerpo.exported })))
+    Ok(Json(
+        serde_json::json!({ "id": id, "exported": cuerpo.exported }),
+    ))
 }
 
 /// De donde viene la peticion, para el modo log. El puente MCP se identifica
 /// con una cabecera; todo lo demas es la web o un script.
 fn origen(cabeceras: &axum::http::HeaderMap) -> &'static str {
-    match cabeceras.get("x-diario-origen").and_then(|v| v.to_str().ok()) {
+    match cabeceras
+        .get("x-diario-origen")
+        .and_then(|v| v.to_str().ok())
+    {
         Some("mcp") => "mcp",
         _ => "rest",
     }
@@ -88,14 +96,18 @@ fn origen(cabeceras: &axum::http::HeaderMap) -> &'static str {
 async fn list_tags(State(state): State<AppState>) -> AppResult<Json<Vec<TagCount>>> {
     let store = state.store.clone();
     let tags = blocking(move || store.contar_etiquetas()).await?;
-    state.config.traza("rest", "listar_etiquetas", &format!("n={}", tags.len()));
+    state
+        .config
+        .traza("rest", "listar_etiquetas", &format!("n={}", tags.len()));
     Ok(Json(tags))
 }
 
 async fn list_applications(State(state): State<AppState>) -> AppResult<Json<Vec<Application>>> {
     let store = state.store.clone();
     let apps = blocking(move || store.list_applications()).await?;
-    state.config.traza("rest", "listar_aplicaciones", &format!("n={}", apps.len()));
+    state
+        .config
+        .traza("rest", "listar_aplicaciones", &format!("n={}", apps.len()));
     Ok(Json(apps))
 }
 
@@ -106,9 +118,11 @@ async fn query_entries(
 ) -> AppResult<Json<EntryPage>> {
     let store = state.store.clone();
     let page = blocking(move || store.query_entries(&q)).await?;
-    state
-        .config
-        .traza(origen(&cabeceras), "consultar_entradas", &format!("n={}", page.entries.len()));
+    state.config.traza(
+        origen(&cabeceras),
+        "consultar_entradas",
+        &format!("n={}", page.entries.len()),
+    );
     Ok(Json(page))
 }
 
@@ -119,7 +133,9 @@ async fn get_entry(
 ) -> AppResult<Json<Entry>> {
     let store = state.store.clone();
     let entry = blocking(move || store.get_entry(id)).await?;
-    state.config.traza(origen(&cabeceras), "consultar_entrada", &format!("id={id}"));
+    state
+        .config
+        .traza(origen(&cabeceras), "consultar_entrada", &format!("id={id}"));
     entry.map(Json).ok_or(AppError::NotFound)
 }
 
@@ -152,10 +168,12 @@ async fn create_entry(
 ) -> AppResult<Json<CreatedEntry>> {
     let store = state.store.clone();
     let id = blocking(move || store.create_entry(&new, chrono::Utc::now())).await?;
-    state.config.traza(origen(&cabeceras), "crear_entrada", &format!("id={id}"));
+    state
+        .config
+        .traza(origen(&cabeceras), "crear_entrada", &format!("id={id}"));
     // El aviso va despues de que la entrada este commiteada, y no se espera a
     // que el exportador termine: un fallo de disco no puede tumbar el registro.
-state.avisar_exportador.notify_one();
+    state.avisar_exportador.notify_one();
     Ok(Json(CreatedEntry {
         id,
         url: state.config.entry_url(id),
@@ -279,7 +297,12 @@ mod tests {
     async fn health_ok() {
         let app = router(test_state());
         let resp = app
-            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -310,7 +333,12 @@ mod tests {
         // Listar aplicaciones.
         let resp = app
             .clone()
-            .oneshot(Request::builder().uri("/api/v1/applications").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/applications")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let apps: Vec<Application> = json_body(resp).await;
@@ -388,11 +416,22 @@ mod tests {
     async fn spa_fallback_serves_index() {
         let app = router(test_state());
         let resp = app
-            .oneshot(Request::builder().uri("/alguna/ruta/cliente").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/alguna/ruta/cliente")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap().to_string();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         assert!(ct.contains("text/html"));
     }
 }

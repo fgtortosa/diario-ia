@@ -3,10 +3,12 @@
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
-use diario_shared::{Application, Entry, EntrySummary, TagCount, markdown_de};
+use diario_shared::{markdown_de, Application, Entry, EntrySummary, TagCount};
 
 use crate::api::{self, EntryFilters};
-use crate::ffi::{current_path, on_popstate, push_path, render_diagrams, descargar_fichero, imprimir};
+use crate::ffi::{
+    current_path, descargar_fichero, imprimir, on_popstate, push_path, render_diagrams,
+};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
@@ -256,7 +258,11 @@ fn entry_card(
 ) -> impl IntoView {
     let id = e.id;
     let time = e.created_at.format("%H:%M").to_string();
-    let model_suffix = e.model.clone().map(|m| format!(" · {m}")).unwrap_or_default();
+    let model_suffix = e
+        .model
+        .clone()
+        .map(|m| format!(" · {m}"))
+        .unwrap_or_default();
     let meta = format!("{}{} · {}", e.agent_name, model_suffix, time);
     let tags = e.tags.clone();
     view! {
@@ -343,7 +349,9 @@ fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
     // que descargar a mano y exportar automaticamente produzcan lo mismo.
     let nombre_md = format!(
         "{}-{}-{}.md",
-        e.created_at.with_timezone(&chrono::Local).format("%Y%m%d-%H%M%S"),
+        e.created_at
+            .with_timezone(&chrono::Local)
+            .format("%Y%m%d-%H%M%S"),
         e.application_slug,
         e.id
     );
