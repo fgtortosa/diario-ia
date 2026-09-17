@@ -78,6 +78,10 @@ escritura pasa a exigir `Authorization: Bearer <token>`.
 
 ### MCP (recomendado para Claude Code)
 
+> Para el resto de clientes —Codex, GitHub Copilot en VS Code y Visual Studio,
+> Copilot CLI y coding agent, Claude Desktop, Cursor— y para las trampas de cada
+> formato, ver **[INSTALACION-MCP.md](INSTALACION-MCP.md)**.
+
 Cada persona registra el binario como servidor MCP por stdio, apuntando al
 servidor central. `.mcp.json` del proyecto (o config global de Claude Code):
 
