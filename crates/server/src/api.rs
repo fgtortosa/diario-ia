@@ -92,6 +92,9 @@ async fn create_entry(
 ) -> AppResult<Json<CreatedEntry>> {
     let store = state.store.clone();
     let id = blocking(move || store.create_entry(&new, chrono::Utc::now())).await?;
+    // El aviso va despues de que la entrada este commiteada, y no se espera a
+    // que el exportador termine: un fallo de disco no puede tumbar el registro.
+    state.avisar_exportador.notify_waiters();
     Ok(Json(CreatedEntry {
         id,
         url: state.config.entry_url(id),
@@ -118,8 +121,9 @@ mod tests {
                 db_path: ":memory:".into(),
                 public_url: "http://test".into(),
                 viewer_token: None,
-            tareas_dir: None,
+                tareas_dir: None,
             }),
+            avisar_exportador: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -138,6 +142,37 @@ mod tests {
             "tags": ["api"]
         })
         .to_string()
+    }
+
+    #[tokio::test]
+    async fn crear_una_entrada_despierta_al_exportador() {
+        // Prueba el cableado, no la exportacion: que el handler avise. Sin esto
+        // el exportador solo correria al arrancar el servidor.
+        let state = test_state();
+        let app = router(state.clone());
+        let aviso = state.avisar_exportador.clone();
+
+        let esperando = tokio::spawn(async move { aviso.notified().await });
+        // Margen para que el waiter se registre antes de disparar el aviso.
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/entries")
+                    .header("content-type", "application/json")
+                    .body(Body::from(post_entry_body("mi-app", "Titulo")))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), esperando)
+            .await
+            .expect("el exportador no recibio el aviso")
+            .unwrap();
     }
 
     #[tokio::test]

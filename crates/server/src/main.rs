@@ -153,8 +153,36 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
     let state = AppState {
         store,
         config: Arc::new(config.clone()),
+            avisar_exportador: Arc::new(tokio::sync::Notify::new()),
     };
     run_async(async move {
+        // Bucle del exportador. La primera vuelta se ejecuta antes del primer
+        // notified(), asi que al arrancar ya arrastra lo que quedara atrasado.
+        // Va en spawn_blocking porque escribe a disco y usa SQLite de forma
+        // sincrona: bloquear un hilo del runtime pararia tambien el HTTP.
+        {
+            let store = state.store.clone();
+            let tareas = config.tareas_dir.clone();
+            let aviso = state.avisar_exportador.clone();
+            tokio::spawn(async move {
+                loop {
+                    let s = store.clone();
+                    let d = tareas.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        exporter::exportar_pendientes(&s, d.as_deref())
+                    })
+                    .await
+                    {
+                        Ok(Ok(n)) if n > 0 => tracing::info!("exportadas {n} entradas al repositorio"),
+                        Ok(Err(e)) => tracing::warn!("fallo al exportar: {e}"),
+                        Err(e) => tracing::warn!("el exportador se cayo: {e}"),
+                        _ => {}
+                    }
+                    aviso.notified().await;
+                }
+            });
+        }
+
         let app = api::router(state);
         let listener = tokio::net::TcpListener::bind(config.bind).await?;
         tracing::info!("Diario-IA escuchando en http://{}", config.bind);

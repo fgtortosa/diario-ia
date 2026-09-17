@@ -223,8 +223,9 @@ mod tests {
                 db_path: ":memory:".into(),
                 public_url: base.clone(),
                 viewer_token: None,
-            tareas_dir: None,
+                tareas_dir: None,
             }),
+            avisar_exportador: Arc::new(tokio::sync::Notify::new()),
         };
         let app = crate::api::router(state);
         tokio::spawn(async move {
