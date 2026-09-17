@@ -45,6 +45,9 @@ Tiene que estar arrancado para que `log_task` funcione. Si solo lo usas tú, val
 `http://127.0.0.1:8787`; si lo comparte el equipo, despliégalo en un host y usa esa URL
 en todos los clientes.
 
+Para no tener que acordarse de arrancarlo, ver
+[Arrancar el servidor al iniciar sesión](#arrancar-el-servidor-al-iniciar-sesión-windows).
+
 ### 3. La API key
 
 El servidor arranca en **modo bootstrap**: mientras no exista ninguna key, la escritura
@@ -406,6 +409,150 @@ Son tres familias: `mcpServers` (Anthropic y derivados), `servers` (Microsoft) y
 
 ---
 
+## Arrancar el servidor al iniciar sesión (Windows)
+
+Configurar el MCP en los clientes no sirve de nada si `diario serve` no está levantado:
+`diario mcp` es solo un puente, y sin servidor al otro lado `log_task` falla. Lo natural
+es que arranque con la sesión.
+
+### Lo que queda montado
+
+Una **tarea programada** llamada `DiarioIA`, en el perfil del usuario, disparada al
+iniciar sesión:
+
+| Ajuste | Valor | Por qué |
+|---|---|---|
+| Disparador | Al iniciar sesión (`AtLogOn`), del usuario actual | Arranca contigo, no con la máquina |
+| Acción | `…\target\release\diario.exe serve --db "…\diario.db" --bind 127.0.0.1:8787` | Rutas absolutas, ver abajo |
+| Tipo de inicio de sesión | `Interactive` | Ver abajo |
+| Nivel | `Limited` | No pide elevación ni permisos de administrador |
+| Límite de ejecución | Ilimitado (`PT0S`) | Por defecto son 3 días: el servidor moriría el jueves |
+| Varias instancias | `IgnoreNew` | Un segundo arranque no pelea por el puerto |
+| Reinicio | 3 intentos cada minuto | Si el proceso se cae, vuelve solo |
+| Batería | No se detiene ni se impide el arranque | Portátiles |
+
+### El comando que la crea
+
+Se ejecuta **sin privilegios de administrador**. Es idempotente: `-Force` reemplaza la
+tarea si ya existe, así que se puede volver a lanzar tal cual para cambiar cualquier
+parámetro.
+
+```powershell
+$exe = 'C:\Users\<usuario>\codigo\herramientas\diario-ia\target\release\diario.exe'
+$db  = 'C:\Users\<usuario>\codigo\herramientas\diario-ia\diario.db'
+$dir = 'C:\Users\<usuario>\codigo\herramientas\diario-ia'
+$usuario = "$env:USERDOMAIN\$env:USERNAME"
+
+$accion = New-ScheduledTaskAction -Execute $exe `
+  -Argument "serve --db `"$db`" --bind 127.0.0.1:8787" -WorkingDirectory $dir
+
+$disparador = New-ScheduledTaskTrigger -AtLogOn -User $usuario
+
+$principal = New-ScheduledTaskPrincipal -UserId $usuario -LogonType Interactive -RunLevel Limited
+
+$ajustes = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+  -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) `
+  -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew
+
+Register-ScheduledTask -TaskName 'DiarioIA' -Action $accion -Trigger $disparador `
+  -Principal $principal -Settings $ajustes -Force `
+  -Description 'Servidor central de diario-ia. Arranca al iniciar sesion.'
+```
+
+### Por qué cada decisión
+
+**`--db` y `--bind` absolutos, no el directorio de trabajo.** El valor por defecto de
+`--db` es `diario.db` **relativo al directorio actual**. Si la tarea arrancara con otro
+cwd —y el cwd de una tarea programada no siempre es el que crees—, el servidor crearía
+una base de datos nueva y vacía en otro sitio, arrancaría perfectamente y el diario
+aparecería en blanco. Sin ningún error. Pasar la ruta completa elimina esa clase de
+fallo.
+
+**`--bind 127.0.0.1:8787`, no el `0.0.0.0` por defecto.** Un servidor que arranca solo y
+se queda todo el día escuchando es otra cosa que uno que levantas a mano un rato. Con
+`0.0.0.0` el diario queda accesible desde toda la red, y aunque la escritura exige API
+key, **la lectura es libre** mientras `DIARIO_VIEWER_TOKEN` esté vacío: cualquiera en la
+red podría leer los prompts. Si algún día lo compartes con el equipo, eso se hace
+desplegando el servidor en un host, no abriendo el de tu portátil.
+
+**`Interactive` como tipo de inicio de sesión.** Hay tres opciones y dos se caen:
+
+| Tipo | Ventana visible | Contraseña | Aquí |
+|---|---|---|---|
+| `S4U` | No | No | **Falla**: `Acceso denegado` con cuenta de dominio |
+| `Password` | No | **Sí, almacenada** | Descartada |
+| `Interactive` | Depende | No | La que queda, y funciona |
+
+`S4U` sería lo ideal —sin ventana y sin contraseña— pero necesita privilegios que una
+cuenta de dominio corriente no tiene. Lo que quedaba era `Interactive`, con la duda de
+si dejaría una consola negra abierta en el escritorio a cada arranque.
+
+No la deja. Comprobado: el proceso lanzado por el Programador de tareas sale con
+`MainWindowHandle = 0` y sin título de ventana, es decir, sin consola visible. Así que
+no hace falta ningún envoltorio (`.vbs`, `Start-Process -WindowStyle Hidden`…), que
+además tienen un coste: la tarea pasaría a gestionar el envoltorio y no el servidor, y
+`Stop-ScheduledTask` dejaría de pararlo.
+
+### Manejo diario
+
+```powershell
+Get-ScheduledTask     -TaskName 'DiarioIA'   # estado (Ready / Running)
+Get-ScheduledTaskInfo -TaskName 'DiarioIA'   # ultima ejecucion y resultado
+Start-ScheduledTask   -TaskName 'DiarioIA'   # arrancar ahora, sin reiniciar sesion
+Stop-ScheduledTask    -TaskName 'DiarioIA'   # parar
+Unregister-ScheduledTask -TaskName 'DiarioIA' -Confirm:$false   # desinstalar
+```
+
+También por interfaz: `taskschd.msc`, **Biblioteca del Programador de tareas**.
+
+**`LastTaskResult: 267009` no es un error.** Es `0x00041301`, *"la tarea está ejecutándose
+actualmente"*, que es exactamente lo que se espera de un proceso que no termina nunca. El
+`0` que uno busca instintivamente solo aparecería si el servidor se hubiera parado.
+
+### La trampa: recompilar con el servidor arrancado
+
+Windows bloquea los ejecutables en uso. Con la tarea corriendo desde
+`target\release\diario.exe`, un `cargo build --release` falla al enlazar, porque no puede
+sobrescribir el `.exe`. El error habla de acceso denegado y no menciona la tarea
+programada por ningún sitio.
+
+Antes de recompilar:
+
+```powershell
+Stop-ScheduledTask -TaskName 'DiarioIA'
+cargo build --release -p diario-server
+Start-ScheduledTask -TaskName 'DiarioIA'
+```
+
+La alternativa es copiar el binario a una ubicación estable (`%LOCALAPPDATA%\diario\`) y
+apuntar ahí la tarea, desacoplándola del repositorio. Tiene su propio inconveniente: al
+recompilar hay que acordarse de copiar, o seguirás ejecutando la versión vieja sin
+enterarte.
+
+### Comprobar que quedó bien
+
+```powershell
+Get-ScheduledTask -TaskName 'DiarioIA' | Select-Object TaskName, State
+(Invoke-WebRequest 'http://127.0.0.1:8787/api/v1/applications' -UseBasicParsing).StatusCode
+Get-Process diario | Select-Object Id, MainWindowHandle   # el handle debe ser 0
+netstat -ano | Select-String '8787'                       # debe decir 127.0.0.1, no 0.0.0.0
+```
+
+La prueba de verdad es cerrar sesión y volver a entrar: el servidor tiene que responder
+sin que tú hayas hecho nada.
+
+### Por qué no un servicio de Windows
+
+Sería lo canónico para algo que escucha en un puerto, pero pide dos cosas que aquí no
+hay: permisos de administrador para registrarlo, y que el binario implemente el
+protocolo del Service Control Manager, que `diario` no hace —arrancado como servicio, el
+SCM lo mataría por no responder al *start pending*—. Una tarea al iniciar sesión da casi
+lo mismo sin privilegios. Lo que se pierde es que el diario solo está disponible cuando
+tú has iniciado sesión, que para un servidor personal en tu propio equipo es justo lo
+que quieres.
+
+---
+
 ## Agentes sin MCP: REST
 
 Cualquier cosa que sepa hacer un POST puede escribir en el diario. Es la vía para
@@ -518,6 +665,9 @@ configuración del cliente, no en el diario.
 | VS Code no ve el servidor                | Está en modo *Ask*/*Edit* en vez de **Agent**, o las herramientas están desactivadas |
 | Todo va bien pero el diario está vacío   | Falta la instrucción de registro en el `CLAUDE.md` del proyecto          |
 | Las entradas salen repartidas            | `application` escrito distinto cada vez                                  |
+| `cargo build` falla al enlazar           | La tarea `DiarioIA` tiene el `.exe` bloqueado — párala antes de compilar |
+| El diario aparece vacío de golpe         | El servidor arrancó con otro `--db` y creó una base nueva                |
+| `LastTaskResult` no es `0`               | `267009` (`0x41301`) significa *en ejecución*; es lo correcto aquí       |
 
 ---
 

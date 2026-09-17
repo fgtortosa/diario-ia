@@ -60,3 +60,66 @@ documenta la instalación para el resto de clientes.
 - Borrar la entrada de prueba `_verificacion-mcp`, creada al comprobar la autenticación.
   El API no expone borrado, así que hay que hacerlo contra el SQLite.
 - Fijar la lista canónica de `application`.
+
+---
+
+## 2026-09-17 08:15 — El servidor arranca al iniciar sesión: tarea programada `DiarioIA`
+
+Cerrado el PR #1 e integrado en `main`, se monta el arranque automático del servidor, que
+era la pieza que faltaba: el MCP de los clientes ya estaba configurado, pero `diario mcp`
+es solo un puente y sin `diario serve` levantado `log_task` falla.
+
+**Acciones realizadas**
+
+- Rama local `ConfiguracionMcpClientes` borrada y `main` actualizada a `dd6d677` (incluye
+  las correcciones de `b1a980e` y `c814a0d` sobre las rutas de build y de `serve`).
+- Tarea programada **`DiarioIA`**, disparada al iniciar sesión del usuario, registrada
+  sin permisos de administrador.
+- Documentada en `INSTALACION-MCP.md`, sección *Arrancar el servidor al iniciar sesión
+  (Windows)*: el comando que la crea, el porqué de cada ajuste, el manejo diario y las
+  trampas. Enlazada desde el `README.md` y desde la sección del servidor central.
+
+**Decisiones**
+
+- **`LogonType Interactive`.** De las tres opciones, `S4U` —sin ventana y sin contraseña—
+  es la buena, pero devuelve `Acceso denegado` con la cuenta de dominio `CAMPUS\`, porque
+  necesita privilegios que no tiene. `Password` almacenaría la contraseña y queda
+  descartada. Quedaba `Interactive`, con la duda de si dejaría una consola abierta:
+  **comprobado que no** (`MainWindowHandle = 0`), así que no hace falta envoltorio
+  `.vbs` ni `Start-Process -WindowStyle Hidden`. Se evita además su coste, que es que la
+  tarea pasaría a gestionar el envoltorio y `Stop-ScheduledTask` dejaría de parar el
+  servidor.
+- **`--db` y `--bind` absolutos en la línea de órdenes**, no confiando en el directorio de
+  trabajo. `--db` por defecto es relativo al cwd: con otro cwd, el servidor crearía una
+  base vacía en otro sitio, arrancaría sin un solo error y el diario aparecería en blanco.
+- **`--bind 127.0.0.1:8787`, cambiando el `0.0.0.0` por defecto.** Un servidor que se
+  queda escuchando todo el día es otra cosa que uno levantado a mano un rato: con
+  `0.0.0.0` el diario queda accesible desde toda la red y, aunque la escritura exige API
+  key, la **lectura es libre** mientras `DIARIO_VIEWER_TOKEN` esté vacío. Compartirlo con
+  el equipo es desplegar un servidor, no abrir el del portátil.
+- **Límite de ejecución ilimitado** (`PT0S`). El valor por defecto son 3 días: sin
+  tocarlo, el servidor moriría solo al tercer día.
+- **No se hace servicio de Windows.** Pide administrador y que el binario hable con el
+  Service Control Manager, cosa que `diario` no hace. Una tarea al iniciar sesión da casi
+  lo mismo sin privilegios; lo que se pierde es que el diario solo está disponible con la
+  sesión iniciada, que para un servidor personal es lo deseable.
+- **La tarea apunta al binario del repositorio**, no a una copia en `%LOCALAPPDATA%`. Es
+  reversible y evita ejecutar una versión vieja sin enterarse, a cambio de que Windows
+  bloquee el `.exe`: hay que parar la tarea antes de recompilar. Queda documentado con el
+  comando y en la tabla de problemas frecuentes.
+
+**Verificación**
+
+- `Get-ScheduledTask` → `Ready`; tras `Start-ScheduledTask`, servidor respondiendo `200`.
+- `MainWindowHandle = 0` y título vacío: sin consola visible.
+- `netstat` muestra `127.0.0.1:8787`, ya no `0.0.0.0:8787`.
+- El servidor usa la base correcta: `/api/v1/applications` devuelve las dos aplicaciones
+  existentes, no una base nueva.
+- `LastTaskResult = 267009` = `0x41301`, *en ejecución*, que es el valor correcto para un
+  proceso que no termina.
+
+**Pendiente**
+
+- Sigue pendiente de la tarea anterior: borrar la entrada de prueba `_verificacion-mcp` y
+  fijar la lista canónica de `application`.
+- La prueba definitiva del disparador es cerrar sesión y volver a entrar.

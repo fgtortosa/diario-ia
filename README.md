@@ -46,6 +46,9 @@ just build      # compila la SPA y el binario con la SPA embebida
 # Abre http://localhost:8787
 ```
 
+En Windows se puede dejar arrancado al iniciar sesión con una tarea programada, sin
+permisos de administrador: ver [INSTALACION-MCP.md](INSTALACION-MCP.md#arrancar-el-servidor-al-iniciar-sesión-windows).
+
 Variables de entorno del servidor:
 
 | Variable              | Por defecto                | Descripción                          |
