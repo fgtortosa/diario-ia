@@ -11,6 +11,11 @@ use rmcp::{schemars, tool, tool_handler, tool_router, ErrorData as McpError, Ser
 
 use diario_shared::{CreatedEntry, NewEntry};
 
+/// Cabecera con la que el puente MCP se identifica ante el servidor. Sin ella
+/// sus operaciones se registrarian como REST, que es de donde llegan, y el modo
+/// log no podria distinguir quien pregunta.
+const ORIGEN: &str = "x-diario-origen";
+
 #[derive(Clone)]
 pub struct DiarioMcp {
     http: reqwest::Client,
@@ -100,7 +105,7 @@ impl DiarioMcp {
             duration_ms: None,
             metadata: None,
         };
-        let mut req = self.http.post(self.url("/api/v1/entries")).json(&body);
+        let mut req = self.http.post(self.url("/api/v1/entries")).json(&body).header(ORIGEN, "mcp");
         if let Some(k) = &self.api_key {
             req = req.bearer_auth(k);
         }
@@ -145,7 +150,7 @@ impl DiarioMcp {
         if let Some(v) = a.limit {
             query.push(("limit".into(), v.to_string()));
         }
-        let mut req = self.http.get(self.url("/api/v1/entries")).query(&query);
+        let mut req = self.http.get(self.url("/api/v1/entries")).query(&query).header(ORIGEN, "mcp");
         if let Some(k) = &self.api_key {
             req = req.bearer_auth(k);
         }
@@ -166,7 +171,7 @@ impl DiarioMcp {
     }
 
     async fn get_json(&self, path: &str) -> Result<String, McpError> {
-        let mut req = self.http.get(self.url(path));
+        let mut req = self.http.get(self.url(path)).header(ORIGEN, "mcp");
         if let Some(k) = &self.api_key {
             req = req.bearer_auth(k);
         }
@@ -224,6 +229,7 @@ mod tests {
                 public_url: base.clone(),
                 viewer_token: None,
                 tareas_dir: None,
+                log_ops: false,
             }),
             avisar_exportador: Arc::new(tokio::sync::Notify::new()),
         };

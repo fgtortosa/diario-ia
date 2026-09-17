@@ -58,6 +58,9 @@ async fn set_exported(
 ) -> AppResult<Json<serde_json::Value>> {
     let store = state.store.clone();
     let existe = blocking(move || store.marcar_exportacion_manual(id, cuerpo.exported)).await?;
+    state
+        .config
+        .traza("rest", "marcar_exportacion", &format!("id={id} exportada={}", cuerpo.exported));
     if !existe {
         return Err(AppError::NotFound);
     }
@@ -68,33 +71,50 @@ async fn set_exported(
     Ok(Json(serde_json::json!({ "id": id, "exported": cuerpo.exported })))
 }
 
+/// De donde viene la peticion, para el modo log. El puente MCP se identifica
+/// con una cabecera; todo lo demas es la web o un script.
+fn origen(cabeceras: &axum::http::HeaderMap) -> &'static str {
+    match cabeceras.get("x-diario-origen").and_then(|v| v.to_str().ok()) {
+        Some("mcp") => "mcp",
+        _ => "rest",
+    }
+}
+
 async fn list_tags(State(state): State<AppState>) -> AppResult<Json<Vec<TagCount>>> {
     let store = state.store.clone();
     let tags = blocking(move || store.contar_etiquetas()).await?;
+    state.config.traza("rest", "listar_etiquetas", &format!("n={}", tags.len()));
     Ok(Json(tags))
 }
 
 async fn list_applications(State(state): State<AppState>) -> AppResult<Json<Vec<Application>>> {
     let store = state.store.clone();
     let apps = blocking(move || store.list_applications()).await?;
+    state.config.traza("rest", "listar_aplicaciones", &format!("n={}", apps.len()));
     Ok(Json(apps))
 }
 
 async fn query_entries(
     State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
     Query(q): Query<EntryQuery>,
 ) -> AppResult<Json<EntryPage>> {
     let store = state.store.clone();
     let page = blocking(move || store.query_entries(&q)).await?;
+    state
+        .config
+        .traza(origen(&cabeceras), "consultar_entradas", &format!("n={}", page.entries.len()));
     Ok(Json(page))
 }
 
 async fn get_entry(
     State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
     Path(id): Path<i64>,
 ) -> AppResult<Json<Entry>> {
     let store = state.store.clone();
     let entry = blocking(move || store.get_entry(id)).await?;
+    state.config.traza(origen(&cabeceras), "consultar_entrada", &format!("id={id}"));
     entry.map(Json).ok_or(AppError::NotFound)
 }
 
@@ -122,10 +142,12 @@ async fn stats(
 
 async fn create_entry(
     State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
     Json(new): Json<NewEntry>,
 ) -> AppResult<Json<CreatedEntry>> {
     let store = state.store.clone();
     let id = blocking(move || store.create_entry(&new, chrono::Utc::now())).await?;
+    state.config.traza(origen(&cabeceras), "crear_entrada", &format!("id={id}"));
     // El aviso va despues de que la entrada este commiteada, y no se espera a
     // que el exportador termine: un fallo de disco no puede tumbar el registro.
 state.avisar_exportador.notify_one();
@@ -156,6 +178,7 @@ mod tests {
                 public_url: "http://test".into(),
                 viewer_token: None,
                 tareas_dir: None,
+                log_ops: false,
             }),
             avisar_exportador: Arc::new(tokio::sync::Notify::new()),
         }

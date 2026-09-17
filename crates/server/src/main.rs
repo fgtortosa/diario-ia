@@ -66,6 +66,9 @@ struct ServeArgs {
     /// Directorio central donde se acumulan las tareas de todas las aplicaciones.
     #[arg(long, env = "DIARIO_TAREAS_DIR")]
     tareas_dir: Option<String>,
+    /// Traza por consola cada operacion del diario, venga de REST o del MCP.
+    #[arg(long, env = "DIARIO_LOG_OPS")]
+    log_ops: bool,
 }
 
 #[derive(Parser)]
@@ -175,6 +178,7 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
         public_url: args.public_url,
         viewer_token: args.viewer_token.filter(|t| !t.is_empty()),
         tareas_dir: args.tareas_dir,
+        log_ops: args.log_ops,
     };
     let store = Store::open(&config.db_path)?;
     let state = AppState {
