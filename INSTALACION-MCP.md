@@ -470,8 +470,8 @@ fallo.
 
 **`--bind 127.0.0.1:8787`, no el `0.0.0.0` por defecto.** Un servidor que arranca solo y
 se queda todo el día escuchando es otra cosa que uno que levantas a mano un rato. Con
-`0.0.0.0` el diario queda accesible desde toda la red, y aunque la escritura exige API
-key, **la lectura es libre** mientras `DIARIO_VIEWER_TOKEN` esté vacío: cualquiera en la
+| `0.0.0.0` el diario queda accesible desde toda la red; tras crear la primera API key,
+| la escritura exige autenticación, pero **la lectura sigue siendo libre** mientras `DIARIO_VIEWER_TOKEN` esté vacío: cualquiera en
 red podría leer los prompts. Si algún día lo compartes con el equipo, eso se hace
 desplegando el servidor en un host, no abriendo el de tu portátil.
 
