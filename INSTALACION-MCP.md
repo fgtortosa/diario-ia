@@ -594,7 +594,7 @@ La regla, para que ningún agente tenga que inventárselo:
 > **`application` = el nombre de la carpeta del repositorio, tal cual.**
 
 Nada más. No se embellece, no se traduce y, sobre todo, **no se usa el nombre real de la
-aplicación**. Esa es la parte que se presta a error, porque conviven tres nombres
+aplicación**. Esa es la parte que se presta a error, porque conviven dos nombres
 distintos para la misma cosa:
 
 | Nombre | Qué es | Dónde manda |
