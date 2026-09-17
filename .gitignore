@@ -16,3 +16,6 @@ Cargo.lock.orig
 .DS_Store
 .idea
 .vscode
+
+# Salida del subcomando 'diario export': se regenera.
+/export

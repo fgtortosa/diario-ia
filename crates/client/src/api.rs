@@ -23,6 +23,7 @@ pub struct EntryFilters {
     pub from: String,
     pub to: String,
     pub search: String,
+    pub tag: Option<String>,
 }
 
 pub async fn fetch_entries(f: EntryFilters) -> Result<EntryPage, String> {
@@ -38,6 +39,9 @@ pub async fn fetch_entries(f: EntryFilters) -> Result<EntryPage, String> {
     }
     if !f.search.is_empty() {
         url.push_str(&format!("&q={}", enc(&f.search)));
+    }
+    if let Some(tag) = f.tag.filter(|s| !s.is_empty()) {
+        url.push_str(&format!("&tag={}", enc(&tag)));
     }
     Request::get(&url)
         .send()

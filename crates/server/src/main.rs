@@ -4,6 +4,7 @@ mod api;
 mod auth;
 mod config;
 mod error;
+mod exporter;
 mod mcp;
 mod render;
 mod state;
@@ -41,6 +42,11 @@ enum Command {
     Migrate(DbArgs),
     /// Exporta las entradas a ficheros markdown en un directorio.
     Export(ExportArgs),
+    /// Asocia aplicaciones a la carpeta de su repositorio.
+    Repo {
+        #[command(subcommand)]
+        action: RepoAction,
+    },
 }
 
 #[derive(Parser)]
@@ -57,6 +63,9 @@ struct ServeArgs {
     /// Token de lectura opcional (protege GET/SPA). Vacio = lectura libre.
     #[arg(long, env = "DIARIO_VIEWER_TOKEN")]
     viewer_token: Option<String>,
+    /// Directorio central donde se acumulan las tareas de todas las aplicaciones.
+    #[arg(long, env = "DIARIO_TAREAS_DIR")]
+    tareas_dir: Option<String>,
 }
 
 #[derive(Parser)]
@@ -73,6 +82,27 @@ struct McpArgs {
 struct DbArgs {
     #[arg(long, env = "DIARIO_DB", default_value = "diario.db")]
     db: String,
+}
+
+#[derive(Subcommand)]
+enum RepoAction {
+    /// Asocia una aplicacion a la carpeta de su repositorio. Ruta vacia la desasocia.
+    Set {
+        aplicacion: String,
+        ruta: String,
+        #[arg(long, env = "DIARIO_DB", default_value = "diario.db")]
+        db: String,
+    },
+    /// Que aplicaciones escriben y donde.
+    List {
+        #[arg(long, env = "DIARIO_DB", default_value = "diario.db")]
+        db: String,
+    },
+    /// Entradas pendientes de exportar, por aplicacion. En regimen normal, cero.
+    Status {
+        #[arg(long, env = "DIARIO_DB", default_value = "diario.db")]
+        db: String,
+    },
 }
 
 #[derive(Parser)]
@@ -119,6 +149,7 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Command::Export(args) => run_export(args),
+        Command::Repo { action } => run_repo(action),
     }
 }
 
@@ -143,13 +174,44 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
         db_path: args.db.clone(),
         public_url: args.public_url,
         viewer_token: args.viewer_token.filter(|t| !t.is_empty()),
+        tareas_dir: args.tareas_dir,
     };
     let store = Store::open(&config.db_path)?;
     let state = AppState {
         store,
         config: Arc::new(config.clone()),
+            avisar_exportador: Arc::new(tokio::sync::Notify::new()),
     };
     run_async(async move {
+        // Bucle del exportador. La primera vuelta se ejecuta antes del primer
+        // notified(), asi que al arrancar ya arrastra lo que quedara atrasado.
+        // Va en spawn_blocking porque escribe a disco y usa SQLite de forma
+        // sincrona: bloquear un hilo del runtime pararia tambien el HTTP.
+        {
+            let store = state.store.clone();
+            // Por el accesor, para que la cadena vacia de DIARIO_TAREAS_DIR
+            // se resuelva en un solo sitio.
+            let tareas = config.tareas_dir_efectivo().map(|s| s.to_string());
+            let aviso = state.avisar_exportador.clone();
+            tokio::spawn(async move {
+                loop {
+                    let s = store.clone();
+                    let d = tareas.clone();
+                    match tokio::task::spawn_blocking(move || {
+                        exporter::exportar_pendientes(&s, d.as_deref())
+                    })
+                    .await
+                    {
+                        Ok(Ok(n)) if n > 0 => tracing::info!("exportadas {n} entradas al repositorio"),
+                        Ok(Err(e)) => tracing::warn!("fallo al exportar: {e}"),
+                        Err(e) => tracing::warn!("el exportador se cayo: {e}"),
+                        _ => {}
+                    }
+                    aviso.notified().await;
+                }
+            });
+        }
+
         let app = api::router(state);
         let listener = tokio::net::TcpListener::bind(config.bind).await?;
         tracing::info!("Diario-IA escuchando en http://{}", config.bind);
@@ -190,6 +252,41 @@ fn run_key(action: KeyAction) -> anyhow::Result<()> {
                 println!("API key #{id} revocada.");
             } else {
                 println!("No existe la API key #{id}.");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn run_repo(action: RepoAction) -> anyhow::Result<()> {
+    match action {
+        RepoAction::Set { aplicacion, ruta, db } => {
+            let store = Store::open(&db)?;
+            let ruta_opt = if ruta.is_empty() { None } else { Some(ruta.as_str()) };
+            if store.set_repo_path(&aplicacion, ruta_opt)? {
+                match ruta_opt {
+                    Some(r) => println!("{aplicacion} -> {r}"),
+                    None => println!("{aplicacion} -> (solo directorio central)"),
+                }
+            } else {
+                println!("La aplicacion '{aplicacion}' no existe todavia en el diario.");
+            }
+        }
+        RepoAction::List { db } => {
+            let store = Store::open(&db)?;
+            for (nombre, ruta) in store.listar_repos()? {
+                let destino = ruta.unwrap_or_else(|| "(solo directorio central)".to_string());
+                println!("{nombre:<46} {destino}");
+            }
+        }
+        RepoAction::Status { db } => {
+            let store = Store::open(&db)?;
+            let pendientes = store.contar_pendientes_por_aplicacion()?;
+            if pendientes.is_empty() {
+                println!("No hay entradas pendientes de exportar.");
+            }
+            for (nombre, n) in pendientes {
+                println!("{nombre:<46} {n} pendiente(s)");
             }
         }
     }

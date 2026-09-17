@@ -39,3 +39,4 @@ rmcp = { workspace = true }
 [dev-dependencies]
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"
+tempfile = "3"
