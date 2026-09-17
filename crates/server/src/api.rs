@@ -8,9 +8,7 @@ use serde::Deserialize;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use diario_shared::{
-    Application, CreatedEntry, DayCount, Entry, EntryPage, EntryQuery, NewEntry,
-};
+use diario_shared::{Application, CreatedEntry, DayCount, Entry, EntryPage, EntryQuery, NewEntry};
 
 use crate::auth::{require_viewer, require_write_key};
 use crate::error::{AppError, AppResult};
@@ -55,10 +53,7 @@ async fn query_entries(
     Ok(Json(page))
 }
 
-async fn get_entry(
-    State(state): State<AppState>,
-    Path(id): Path<i64>,
-) -> AppResult<Json<Entry>> {
+async fn get_entry(State(state): State<AppState>, Path(id): Path<i64>) -> AppResult<Json<Entry>> {
     let store = state.store.clone();
     let entry = blocking(move || store.get_entry(id)).await?;
     entry.map(Json).ok_or(AppError::NotFound)
@@ -94,7 +89,7 @@ async fn create_entry(
     let id = blocking(move || store.create_entry(&new, chrono::Utc::now())).await?;
     // El aviso va despues de que la entrada este commiteada, y no se espera a
     // que el exportador termine: un fallo de disco no puede tumbar el registro.
-state.avisar_exportador.notify_one();
+    state.avisar_exportador.notify_one();
     Ok(Json(CreatedEntry {
         id,
         url: state.config.entry_url(id),
@@ -179,7 +174,12 @@ mod tests {
     async fn health_ok() {
         let app = router(test_state());
         let resp = app
-            .oneshot(Request::builder().uri("/healthz").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/healthz")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
@@ -210,7 +210,12 @@ mod tests {
         // Listar aplicaciones.
         let resp = app
             .clone()
-            .oneshot(Request::builder().uri("/api/v1/applications").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/applications")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         let apps: Vec<Application> = json_body(resp).await;
@@ -288,11 +293,22 @@ mod tests {
     async fn spa_fallback_serves_index() {
         let app = router(test_state());
         let resp = app
-            .oneshot(Request::builder().uri("/alguna/ruta/cliente").body(Body::empty()).unwrap())
+            .oneshot(
+                Request::builder()
+                    .uri("/alguna/ruta/cliente")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let ct = resp.headers().get("content-type").unwrap().to_str().unwrap().to_string();
+        let ct = resp
+            .headers()
+            .get("content-type")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         assert!(ct.contains("text/html"));
     }
 }

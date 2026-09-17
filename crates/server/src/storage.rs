@@ -65,9 +65,7 @@ impl Store {
     #[cfg(test)]
     pub fn in_memory() -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::memory().with_init(init_conn);
-        let pool = r2d2::Pool::builder()
-            .max_size(1)
-            .build(manager)?;
+        let pool = r2d2::Pool::builder().max_size(1).build(manager)?;
         let store = Store { pool };
         store.migrate()?;
         Ok(store)
@@ -227,7 +225,9 @@ impl Store {
         let conn = self.pool.get()?;
         let mut st = conn.prepare("SELECT name, repo_path FROM application ORDER BY name")?;
         let filas = st
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })?
             .collect::<Result<Vec<_>, _>>()?;
         Ok(filas)
     }
@@ -289,9 +289,8 @@ impl Store {
         let entry_id = tx.last_insert_rowid();
 
         {
-            let mut stmt = tx.prepare(
-                "INSERT OR IGNORE INTO entry_tag (entry_id, tag) VALUES (?1, ?2)",
-            )?;
+            let mut stmt =
+                tx.prepare("INSERT OR IGNORE INTO entry_tag (entry_id, tag) VALUES (?1, ?2)")?;
             for tag in &new.tags {
                 let t = tag.trim();
                 if !t.is_empty() {
@@ -348,7 +347,9 @@ impl Store {
             args.push(Value::Text(to.to_string()));
         }
         if let Some(tag) = non_empty(&q.tag) {
-            wheres.push("EXISTS (SELECT 1 FROM entry_tag t WHERE t.entry_id = e.id AND t.tag = ?)".into());
+            wheres.push(
+                "EXISTS (SELECT 1 FROM entry_tag t WHERE t.entry_id = e.id AND t.tag = ?)".into(),
+            );
             args.push(Value::Text(tag.to_string()));
         }
         if let Some(text) = non_empty(&q.q) {
@@ -450,7 +451,8 @@ impl Store {
             return Ok(None);
         };
 
-        let mut tstmt = conn.prepare("SELECT tag FROM entry_tag WHERE entry_id = ?1 ORDER BY tag")?;
+        let mut tstmt =
+            conn.prepare("SELECT tag FROM entry_tag WHERE entry_id = ?1 ORDER BY tag")?;
         entry.tags = tstmt
             .query_map([id], |r| r.get::<_, String>(0))?
             .collect::<Result<_, _>>()?;
@@ -475,7 +477,12 @@ impl Store {
     }
 
     /// Recuento de entradas por dia (para el heatmap).
-    pub fn day_counts(&self, application: Option<&str>, from: Option<&str>, to: Option<&str>) -> AppResult<Vec<DayCount>> {
+    pub fn day_counts(
+        &self,
+        application: Option<&str>,
+        from: Option<&str>,
+        to: Option<&str>,
+    ) -> AppResult<Vec<DayCount>> {
         let conn = self.pool.get()?;
         let mut sql = String::from(
             "SELECT substr(e.created_at,1,10) AS day, count(*)
@@ -588,7 +595,9 @@ impl Store {
     /// Numero de API keys activas (para decidir si exigir auth).
     pub fn active_key_count(&self) -> AppResult<i64> {
         let conn = self.pool.get()?;
-        let n = conn.query_row("SELECT count(*) FROM api_key WHERE active = 1", [], |r| r.get(0))?;
+        let n = conn.query_row("SELECT count(*) FROM api_key WHERE active = 1", [], |r| {
+            r.get(0)
+        })?;
         Ok(n)
     }
 }
@@ -725,7 +734,9 @@ mod tests {
     #[test]
     fn una_entrada_nueva_nace_pendiente() {
         let store = Store::in_memory().unwrap();
-        let id = store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+        let id = store
+            .create_entry(&sample_entry("mi-app", "Titulo"), Utc::now())
+            .unwrap();
 
         let pendientes = store.entradas_pendientes(10).unwrap();
         assert_eq!(pendientes.len(), 1);
@@ -735,7 +746,9 @@ mod tests {
     #[test]
     fn marcar_exportada_la_saca_de_la_cola() {
         let store = Store::in_memory().unwrap();
-        let id = store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+        let id = store
+            .create_entry(&sample_entry("mi-app", "Titulo"), Utc::now())
+            .unwrap();
 
         store.marcar_exportada(id, Utc::now()).unwrap();
 
@@ -745,8 +758,12 @@ mod tests {
     #[test]
     fn las_pendientes_salen_de_la_mas_antigua_a_la_mas_nueva() {
         let store = Store::in_memory().unwrap();
-        let primera = store.create_entry(&sample_entry("mi-app", "Primera"), Utc::now()).unwrap();
-        let segunda = store.create_entry(&sample_entry("mi-app", "Segunda"), Utc::now()).unwrap();
+        let primera = store
+            .create_entry(&sample_entry("mi-app", "Primera"), Utc::now())
+            .unwrap();
+        let segunda = store
+            .create_entry(&sample_entry("mi-app", "Segunda"), Utc::now())
+            .unwrap();
 
         let pendientes = store.entradas_pendientes(10).unwrap();
         assert_eq!(pendientes[0].id, primera);
@@ -756,9 +773,15 @@ mod tests {
     #[test]
     fn contar_pendientes_agrupa_por_aplicacion() {
         let store = Store::in_memory().unwrap();
-        store.create_entry(&sample_entry("app-a", "Una"), Utc::now()).unwrap();
-        store.create_entry(&sample_entry("app-a", "Dos"), Utc::now()).unwrap();
-        store.create_entry(&sample_entry("app-b", "Tres"), Utc::now()).unwrap();
+        store
+            .create_entry(&sample_entry("app-a", "Una"), Utc::now())
+            .unwrap();
+        store
+            .create_entry(&sample_entry("app-a", "Dos"), Utc::now())
+            .unwrap();
+        store
+            .create_entry(&sample_entry("app-b", "Tres"), Utc::now())
+            .unwrap();
 
         assert_eq!(
             store.contar_pendientes_por_aplicacion().unwrap(),
@@ -769,9 +792,13 @@ mod tests {
     #[test]
     fn set_repo_path_guarda_y_lee_la_ruta() {
         let store = Store::in_memory().unwrap();
-        store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+        store
+            .create_entry(&sample_entry("mi-app", "Titulo"), Utc::now())
+            .unwrap();
 
-        assert!(store.set_repo_path("mi-app", Some("C:/repos/mi-app")).unwrap());
+        assert!(store
+            .set_repo_path("mi-app", Some("C:/repos/mi-app"))
+            .unwrap());
 
         assert_eq!(
             store.repo_path_de_slug("mi-app").unwrap(),
@@ -792,8 +819,12 @@ mod tests {
     #[test]
     fn set_repo_path_con_none_borra_la_ruta() {
         let store = Store::in_memory().unwrap();
-        store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
-        store.set_repo_path("mi-app", Some("C:/repos/mi-app")).unwrap();
+        store
+            .create_entry(&sample_entry("mi-app", "Titulo"), Utc::now())
+            .unwrap();
+        store
+            .set_repo_path("mi-app", Some("C:/repos/mi-app"))
+            .unwrap();
 
         store.set_repo_path("mi-app", None).unwrap();
 
@@ -854,8 +885,12 @@ mod tests {
     #[test]
     fn applications_are_deduplicated_by_slug() {
         let store = Store::in_memory().unwrap();
-        store.create_entry(&sample_entry("Portal Alumnos", "t1"), Utc::now()).unwrap();
-        store.create_entry(&sample_entry("portal alumnos", "t2"), Utc::now()).unwrap();
+        store
+            .create_entry(&sample_entry("Portal Alumnos", "t1"), Utc::now())
+            .unwrap();
+        store
+            .create_entry(&sample_entry("portal alumnos", "t2"), Utc::now())
+            .unwrap();
         let apps = store.list_applications().unwrap();
         assert_eq!(apps.len(), 1);
         assert_eq!(apps[0].entry_count, 2);
@@ -864,8 +899,12 @@ mod tests {
     #[test]
     fn query_filters_by_application_and_tag() {
         let store = Store::in_memory().unwrap();
-        store.create_entry(&sample_entry("App A", "a1"), Utc::now()).unwrap();
-        store.create_entry(&sample_entry("App B", "b1"), Utc::now()).unwrap();
+        store
+            .create_entry(&sample_entry("App A", "a1"), Utc::now())
+            .unwrap();
+        store
+            .create_entry(&sample_entry("App B", "b1"), Utc::now())
+            .unwrap();
 
         let q = EntryQuery {
             application: Some("app-a".into()),
@@ -892,7 +931,9 @@ mod tests {
     fn query_pagination_cursor() {
         let store = Store::in_memory().unwrap();
         for i in 0..5 {
-            store.create_entry(&sample_entry("App", &format!("t{i}")), Utc::now()).unwrap();
+            store
+                .create_entry(&sample_entry("App", &format!("t{i}")), Utc::now())
+                .unwrap();
         }
         let q = EntryQuery {
             limit: Some(2),
@@ -918,9 +959,15 @@ mod tests {
         e.response_markdown = "Actualizamos el paquete PL/SQL".into();
         store.create_entry(&e, Utc::now()).unwrap();
 
-        let q = EntryQuery { q: Some("PL/SQL".into()), ..Default::default() };
+        let q = EntryQuery {
+            q: Some("PL/SQL".into()),
+            ..Default::default()
+        };
         assert_eq!(store.query_entries(&q).unwrap().entries.len(), 1);
-        let q2 = EntryQuery { q: Some("kubernetes".into()), ..Default::default() };
+        let q2 = EntryQuery {
+            q: Some("kubernetes".into()),
+            ..Default::default()
+        };
         assert_eq!(store.query_entries(&q2).unwrap().entries.len(), 0);
     }
 
@@ -944,8 +991,12 @@ mod tests {
     #[test]
     fn day_counts_group_by_day() {
         let store = Store::in_memory().unwrap();
-        store.create_entry(&sample_entry("App", "t1"), Utc::now()).unwrap();
-        store.create_entry(&sample_entry("App", "t2"), Utc::now()).unwrap();
+        store
+            .create_entry(&sample_entry("App", "t1"), Utc::now())
+            .unwrap();
+        store
+            .create_entry(&sample_entry("App", "t2"), Utc::now())
+            .unwrap();
         let counts = store.day_counts(None, None, None).unwrap();
         assert_eq!(counts.len(), 1);
         assert_eq!(counts[0].count, 2);
