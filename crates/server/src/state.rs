@@ -10,6 +10,10 @@ use crate::storage::Store;
 pub struct AppState {
     pub store: Store,
     pub config: Arc<ServerConfig>,
+    /// Se dispara tras cada entrada creada para despertar al exportador. Es un
+    /// Notify y no un canal con cola a proposito: no importa cuantos avisos se
+    /// pierdan, porque el exportador siempre procesa TODAS las pendientes.
+    pub avisar_exportador: Arc<tokio::sync::Notify>,
 }
 
 /// Ejecuta una operacion de BD (sincrona) en el pool de hilos bloqueantes.

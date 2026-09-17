@@ -126,6 +126,7 @@ es solo un puente y sin `diario serve` levantado `log_task` falla.
 
 ---
 
+<<<<<<< HEAD
 ## 2026-09-17 13:55 — Fijada la regla de nombres de `application`
 
 El documento llevaba desde su creación un bloque `PENDIENTE` con una propuesta de lista
@@ -186,3 +187,105 @@ Se incorporan las observaciones válidas de la revisión del PR #3.
 
 - Comprobado que la rama no contiene errores de espacios y que la búsqueda de la guía ya
   no encuentra el ejemplo REST contradictorio.
+=======
+## 2026-09-17 20:30 — Exportación automática del diario a los repositorios
+
+El diario pasa a ser la fuente única: el agente llama a `log_task` y el propio servidor
+escribe, de forma asíncrona, un fichero markdown nuevo por entrada en `<repo>/diario-ia/`
+y en el directorio central de tareas. Sustituye a mantener un `DIARIO.md` a mano.
+
+Implementado con la spec y el plan del mismo día, en `docs/superpowers/`.
+
+**Lo que se añade**
+
+- `migrations/0002_export.sql`: `application.repo_path` y `entry.exported_at`, más un
+  índice parcial sobre lo pendiente.
+- `crates/server/src/exporter.rs`: nombre de fichero, markdown de la entrada, resolución
+  de destinos y `exportar_pendientes`.
+- `storage.rs`: `set_repo_path`, `repo_path_de_slug`, `listar_repos`,
+  `entradas_pendientes`, `marcar_exportada`, `contar_pendientes_por_aplicacion`.
+- `config.rs`: `DIARIO_TAREAS_DIR`.
+- `state.rs` + `api.rs` + `main.rs`: el `Notify` y el bucle de fondo.
+- CLI: `diario repo set | list | status`.
+
+**Decisiones**
+
+- **Una carpeta y no un fichero.** Añadir al final de un `DIARIO.md` único garantiza
+  conflictos: dos ramas que registren tareas tocan las dos la última línea. Un fichero por
+  entrada no puede entrar en conflicto nunca, por construcción.
+- **El escritor solo crea ficheros nuevos, nunca modifica uno existente.** De esa única
+  regla salen las dos propiedades que sostienen el diseño: cero conflictos, y que nada se
+  corrompa si falla a mitad.
+- **Se marca `exported_at` solo si todos los destinos fueron bien.** Y por eso
+  `escribir_si_no_existe` se salta el fichero ya escrito: si un destino fue bien y otro
+  falló, al reintentar el bueno se duplicaría.
+- **`exported_at` hace de marcado y de cola a la vez.** Lo pendiente es exactamente
+  `WHERE exported_at IS NULL`, así que no hace falta tabla de cola.
+- **Se procesan todas las pendientes, no solo la recién creada.** Es lo que hace que el
+  sistema se recupere solo tras una parada o un repositorio que no existía.
+- **`Notify` y no un canal con cola.** Da igual cuántos avisos se pierdan, porque siempre
+  se procesan todas las pendientes.
+- **El bucle va en `spawn_blocking`.** Escribe a disco y usa SQLite de forma síncrona:
+  bloquear un hilo del runtime pararía también el servidor HTTP.
+- **La migración marca las entradas anteriores como exportadas.** Su contenido ya está
+  escrito a mano en los `DIARIO.md`; volcarlas duplicaría lo que ya está. El corte es el
+  día de la migración.
+- **`TAREAS-PENDIENTES.md` queda fuera.** El diario y las efectuadas son registros
+  append-only; las pendientes son estado, y con ficheros append-only nada saldría nunca de
+  la lista.
+
+**Dos desvíos del plan, ambos a mejor**
+
+- Se usó el ayudante `sample_entry` que ya existía en los tests de `storage.rs` en lugar de
+  crear uno nuevo: el patrón del repositorio manda sobre el plan.
+- El test del reintento cambió de forma. El plan lo resolvía devolviendo la entrada a la
+  cola con un `UPDATE` directo, pero `pool` es privado del módulo `storage`. En vez de
+  abrir el campo solo para un test, se ataca `escribir_si_no_existe`, que es la función que
+  implementa el salto; sale un test mejor, porque comprueba que el contenido del fichero
+  **sigue siendo el primero** tras el segundo intento.
+
+**Verificación**
+
+39 tests en verde. Los que cubren el diseño: escribe en los dos destinos, escribe solo en
+el central sin `repo_path`, no escribe central si no hay `DIARIO_TAREAS_DIR`, una ruta
+inválida deja la entrada pendiente sin romper nada, el reintento no pisa lo ya escrito,
+procesa todas las pendientes, dos entradas del mismo segundo no colisionan, y crear una
+entrada por la API despierta al exportador.
+
+---
+
+## 2026-09-17 20:25 — Filtro por etiqueta en la web
+
+La API soportaba `tag` desde siempre (`EntryQuery.tag`), pero el cliente no lo usaba: las
+etiquetas se pintaban como texto muerto y no había forma de filtrar por ellas desde la web.
+
+**Acciones realizadas**
+
+- `EntryFilters` gana `tag: Option<String>` y lo envía como `&tag=`.
+- Las etiquetas de cada tarjeta pasan de `<span>` a `<button>` clicable.
+- Un chip en la cabecera muestra la etiqueta activa con una × para quitarla.
+- Estilos para la etiqueta clicable, con `:hover` y `:focus-visible`.
+
+**Decisiones**
+
+- **Etiquetas clicables en vez de un control nuevo en la cabecera.** Es más descubrible y no
+  añade ruido: ya estaban ahí, solo eran inertes.
+- **`ev.stop_propagation()` en el clic.** La tarjeta entera tiene un `on:click` que navega
+  al detalle; sin eso, pulsar una etiqueta filtraría y navegaría a la vez.
+- **Se usan las variables CSS que existen** (`--text`, `--accent`, `--accent-soft`). En la
+  primera versión inventé una `--fg` que no estaba declarada.
+
+**Verificación**
+
+- La SPA compila con `trunk build --release` (Leptos es tipado: eso valida el cableado de
+  la señal al filtro y a la URL).
+- El filtro del servidor responde: `?tag=exportacion` devuelve 1, `?tag=gitignore` devuelve
+  1, `?tag=no-existe` devuelve 0.
+- El WASM que sirve el binario contiene las cadenas nuevas, así que lo desplegado es la
+  compilación nueva y no una embebida vieja.
+- **Comprobado en el navegador con Playwright** (la extensión de Chrome no conectaba):
+  pulsar la etiqueta `gitignore` deja el listado en 1 entrada de 23 y aparece el chip
+  `#gitignore ×` en la cabecera; la × lo quita y vuelven las 23. Lo importante es que la
+  URL sigue siendo `/` tras pulsar la etiqueta: el `stop_propagation` funciona y no navega
+  al detalle. Sin errores de consola.
+>>>>>>> origin/main

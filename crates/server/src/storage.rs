@@ -16,6 +16,7 @@ use crate::error::{AppError, AppResult};
 use crate::render;
 
 const MIGRATION_0001: &str = include_str!("../../../migrations/0001_init.sql");
+const MIGRATION_0002: &str = include_str!("../../../migrations/0002_export.sql");
 
 /// Separador de unidad (US) usado para agrupar tags con group_concat.
 const TAG_SEP: char = '\u{1f}';
@@ -75,6 +76,12 @@ impl Store {
     fn migrate(&self) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         conn.execute_batch(MIGRATION_0001)?;
+        // 0002 no es idempotente: ALTER TABLE ADD COLUMN falla si la columna ya
+        // existe. Se comprueba antes en vez de tragarse el error, para no ocultar
+        // fallos reales de la migracion.
+        if !tiene_columna(&conn, "application", "repo_path")? {
+            conn.execute_batch(MIGRATION_0002)?;
+        }
         Ok(())
     }
 
@@ -110,6 +117,90 @@ impl Store {
     // -------------------------------------------------------------- entries
 
     /// Crea una entrada (y la aplicacion si no existe). Devuelve el id.
+    /// Entradas sin exportar, de la mas antigua a la mas nueva.
+    ///
+    /// Se resuelven en dos pasos —primero los ids, luego get_entry— porque
+    /// get_entry pide su propia conexion del pool y mantener abierto el
+    /// statement mientras tanto agotaria el pool con una sola conexion.
+    pub fn entradas_pendientes(&self, limite: usize) -> AppResult<Vec<Entry>> {
+        let ids: Vec<i64> = {
+            let conn = self.pool.get()?;
+            let mut st = conn.prepare(
+                "SELECT id FROM entry WHERE exported_at IS NULL ORDER BY id ASC LIMIT ?1",
+            )?;
+            let filas = st
+                .query_map(params![limite as i64], |r| r.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            filas
+        };
+
+        let mut salida = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(e) = self.get_entry(id)? {
+                salida.push(e);
+            }
+        }
+        Ok(salida)
+    }
+
+    pub fn marcar_exportada(&self, id: i64, cuando: DateTime<Utc>) -> AppResult<()> {
+        let conn = self.pool.get()?;
+        conn.execute(
+            "UPDATE entry SET exported_at = ?1 WHERE id = ?2",
+            params![cuando.to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    /// Cuantas entradas quedan sin exportar, por aplicacion. En regimen normal
+    /// deberia estar vacio: si no lo esta, algo fallo al escribir.
+    pub fn contar_pendientes_por_aplicacion(&self) -> AppResult<Vec<(String, i64)>> {
+        let conn = self.pool.get()?;
+        let mut st = conn.prepare(
+            "SELECT a.name, COUNT(*) FROM entry e              JOIN application a ON a.id = e.application_id              WHERE e.exported_at IS NULL GROUP BY a.name ORDER BY a.name",
+        )?;
+        let filas = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(filas)
+    }
+
+    /// Asocia una aplicacion a la carpeta de su repositorio. None la desasocia.
+    /// Devuelve false si la aplicacion no existe todavia en el diario.
+    pub fn set_repo_path(&self, aplicacion: &str, ruta: Option<&str>) -> AppResult<bool> {
+        let conn = self.pool.get()?;
+        let slug = slugify(aplicacion);
+        let filas = conn.execute(
+            "UPDATE application SET repo_path = ?1 WHERE slug = ?2",
+            params![ruta, slug],
+        )?;
+        Ok(filas > 0)
+    }
+
+    /// Por slug y no por id: Entry expone application_slug y application_name,
+    /// pero no lleva application_id, y el exportador solo tiene la entrada.
+    pub fn repo_path_de_slug(&self, slug: &str) -> AppResult<Option<String>> {
+        let conn = self.pool.get()?;
+        let ruta: Option<Option<String>> = conn
+            .query_row(
+                "SELECT repo_path FROM application WHERE slug = ?1",
+                params![slug],
+                |r| r.get(0),
+            )
+            .optional()?;
+        Ok(ruta.flatten())
+    }
+
+    /// (nombre de la aplicacion, carpeta de su repositorio).
+    pub fn listar_repos(&self) -> AppResult<Vec<(String, Option<String>)>> {
+        let conn = self.pool.get()?;
+        let mut st = conn.prepare("SELECT name, repo_path FROM application ORDER BY name")?;
+        let filas = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(filas)
+    }
+
     pub fn create_entry(&self, new: &NewEntry, now: DateTime<Utc>) -> AppResult<i64> {
         if new.title.trim().is_empty() {
             return Err(AppError::BadRequest("title es obligatorio".into()));
@@ -524,6 +615,15 @@ pub fn slugify(input: &str) -> String {
     }
 }
 
+fn tiene_columna(conn: &rusqlite::Connection, tabla: &str, columna: &str) -> anyhow::Result<bool> {
+    let n: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+        params![tabla, columna],
+        |r| r.get(0),
+    )?;
+    Ok(n > 0)
+}
+
 fn generate_token() -> String {
     use rand::RngCore;
     let mut bytes = [0u8; 24];
@@ -578,6 +678,120 @@ mod tests {
         assert_eq!(slugify("Portal Alumnos"), "portal-alumnos");
         assert_eq!(slugify("  UACloud 2026!! "), "uacloud-2026");
         assert_eq!(slugify("///"), "sin-nombre");
+    }
+
+    #[test]
+    fn una_entrada_nueva_nace_pendiente() {
+        let store = Store::in_memory().unwrap();
+        let id = store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+
+        let pendientes = store.entradas_pendientes(10).unwrap();
+        assert_eq!(pendientes.len(), 1);
+        assert_eq!(pendientes[0].id, id);
+    }
+
+    #[test]
+    fn marcar_exportada_la_saca_de_la_cola() {
+        let store = Store::in_memory().unwrap();
+        let id = store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+
+        store.marcar_exportada(id, Utc::now()).unwrap();
+
+        assert!(store.entradas_pendientes(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn las_pendientes_salen_de_la_mas_antigua_a_la_mas_nueva() {
+        let store = Store::in_memory().unwrap();
+        let primera = store.create_entry(&sample_entry("mi-app", "Primera"), Utc::now()).unwrap();
+        let segunda = store.create_entry(&sample_entry("mi-app", "Segunda"), Utc::now()).unwrap();
+
+        let pendientes = store.entradas_pendientes(10).unwrap();
+        assert_eq!(pendientes[0].id, primera);
+        assert_eq!(pendientes[1].id, segunda);
+    }
+
+    #[test]
+    fn contar_pendientes_agrupa_por_aplicacion() {
+        let store = Store::in_memory().unwrap();
+        store.create_entry(&sample_entry("app-a", "Una"), Utc::now()).unwrap();
+        store.create_entry(&sample_entry("app-a", "Dos"), Utc::now()).unwrap();
+        store.create_entry(&sample_entry("app-b", "Tres"), Utc::now()).unwrap();
+
+        assert_eq!(
+            store.contar_pendientes_por_aplicacion().unwrap(),
+            vec![("app-a".to_string(), 2), ("app-b".to_string(), 1)]
+        );
+    }
+
+    #[test]
+    fn set_repo_path_guarda_y_lee_la_ruta() {
+        let store = Store::in_memory().unwrap();
+        store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+
+        assert!(store.set_repo_path("mi-app", Some("C:/repos/mi-app")).unwrap());
+
+        assert_eq!(
+            store.repo_path_de_slug("mi-app").unwrap(),
+            Some("C:/repos/mi-app".to_string())
+        );
+        assert_eq!(
+            store.listar_repos().unwrap(),
+            vec![("mi-app".to_string(), Some("C:/repos/mi-app".to_string()))]
+        );
+    }
+
+    #[test]
+    fn set_repo_path_de_aplicacion_inexistente_devuelve_false() {
+        let store = Store::in_memory().unwrap();
+        assert!(!store.set_repo_path("no-existe", Some("C:/x")).unwrap());
+    }
+
+    #[test]
+    fn set_repo_path_con_none_borra_la_ruta() {
+        let store = Store::in_memory().unwrap();
+        store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+        store.set_repo_path("mi-app", Some("C:/repos/mi-app")).unwrap();
+
+        store.set_repo_path("mi-app", None).unwrap();
+
+        assert_eq!(store.repo_path_de_slug("mi-app").unwrap(), None);
+    }
+
+    #[test]
+    fn repo_path_de_una_aplicacion_desconocida_es_none() {
+        let store = Store::in_memory().unwrap();
+        assert_eq!(store.repo_path_de_slug("ni-idea").unwrap(), None);
+    }
+
+    #[test]
+    fn migracion_0002_anade_las_columnas_de_exportacion() {
+        let store = Store::in_memory().unwrap();
+        let conn = store.pool.get().unwrap();
+
+        let cols_app: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('application')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(cols_app.contains(&"repo_path".to_string()));
+
+        let cols_entry: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('entry')")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(cols_entry.contains(&"exported_at".to_string()));
+    }
+
+    #[test]
+    fn migrar_dos_veces_no_falla() {
+        let store = Store::in_memory().unwrap();
+        store.migrate().unwrap();
     }
 
     #[test]
