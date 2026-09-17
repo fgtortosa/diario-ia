@@ -72,7 +72,7 @@ pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::R
         let nombre = nombre_fichero(&entrada);
         let cuerpo = markdown_de(&entrada);
 
-        let mut todos_ok = true;
+let mut todos_ok = !destinos.is_empty();
         for dir in &destinos {
             if let Err(e) = escribir_si_no_existe(dir, &nombre, &cuerpo) {
                 tracing::warn!(
