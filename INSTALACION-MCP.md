@@ -456,7 +456,7 @@ $ajustes = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoin
 
 Register-ScheduledTask -TaskName 'DiarioIA' -Action $accion -Trigger $disparador `
   -Principal $principal -Settings $ajustes -Force `
-  -Description 'Servidor central de diario-ia. Arranca al iniciar sesion.'
+  -Description 'Servidor central de diario-ia. Arranca al iniciar sesión.'
 ```
 
 ### Por qué cada decisión
