@@ -76,11 +76,24 @@ impl Store {
     fn migrate(&self) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         conn.execute_batch(MIGRATION_0001)?;
-        // 0002 no es idempotente: ALTER TABLE ADD COLUMN falla si la columna ya
-        // existe. Se comprueba antes en vez de tragarse el error, para no ocultar
-        // fallos reales de la migracion.
-        if !tiene_columna(&conn, "application", "repo_path")? {
+        let tiene_repo_path = tiene_columna(&conn, "application", "repo_path")?;
+        let tiene_exported_at = tiene_columna(&conn, "entry", "exported_at")?;
+        if !tiene_repo_path && !tiene_exported_at {
             conn.execute_batch(MIGRATION_0002)?;
+        } else {
+            // Una interrupcion entre los dos ALTER deja una migracion parcial.
+            // Se completa solo la columna que falte sin volver a marcar entradas.
+            if !tiene_repo_path {
+                conn.execute_batch("ALTER TABLE application ADD COLUMN repo_path TEXT;")?;
+            }
+            if !tiene_exported_at {
+                conn.execute_batch(
+                    "ALTER TABLE entry ADD COLUMN exported_at TEXT;
+                     UPDATE entry SET exported_at = datetime('now') WHERE exported_at IS NULL;
+                     CREATE INDEX IF NOT EXISTS idx_entry_pendiente
+                       ON entry(exported_at) WHERE exported_at IS NULL;",
+                )?;
+            }
         }
         Ok(())
     }

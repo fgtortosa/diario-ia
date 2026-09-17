@@ -6,6 +6,23 @@ decisiones ya tomadas.
 
 ---
 
+## 2026-09-17 21:30 — Fiabilidad del exportador tras la revisión del PR #4
+
+Se corrigen las observaciones aplicables de Copilot en el exportador y en el filtro web.
+
+**Acciones realizadas**
+
+- La exportación crea primero un temporal único y lo publica por renombrado, sin aceptar
+  ficheros parciales como exportaciones completas; además drena los lotes de pendientes.
+- La migración 0002 se recupera si quedó interrumpida entre sus dos columnas, la prueba
+  de ruta inválida es portable y «Limpiar filtros» borra también la etiqueta activa.
+
+**Verificación**
+
+- `cargo test -p diario-server --quiet`: 40 pruebas correctas.
+
+---
+
 ## 2026-09-17 07:55 — Configuración del MCP en Claude Code y Codex, y documento de instalación por cliente
 
 Se pone el diario a funcionar de verdad en los dos agentes que se usan a diario, y se

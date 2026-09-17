@@ -10,6 +10,7 @@
 
 use crate::storage::Store;
 use diario_shared::Entry;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 /// `20260917-125851-redes-ice-netcore-19.md`
@@ -59,7 +60,13 @@ pub fn markdown_de(entry: &Entry) -> String {
 pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::Result<usize> {
     let mut marcadas = 0usize;
 
-    for entrada in store.entradas_pendientes(200)? {
+    loop {
+        let pendientes = store.entradas_pendientes(200)?;
+        if pendientes.is_empty() {
+            break;
+        }
+        let mut marcadas_lote = 0usize;
+        for entrada in pendientes {
         let mut destinos: Vec<PathBuf> = Vec::new();
 
         if let Some(repo) = store.repo_path_de_slug(&entrada.application_slug)? {
@@ -89,6 +96,14 @@ let mut todos_ok = !destinos.is_empty();
         if todos_ok {
             store.marcar_exportada(entrada.id, chrono::Utc::now())?;
             marcadas += 1;
+            marcadas_lote += 1;
+        }
+    }
+
+        // Si el lote no pudo marcar nada, repetirlo no hara progreso y dejaría
+        // al exportador en un bucle infinito. Un aviso posterior lo reintentará.
+        if marcadas_lote == 0 {
+            break;
         }
     }
 
@@ -106,8 +121,25 @@ fn escribir_si_no_existe(dir: &Path, nombre: &str, cuerpo: &str) -> anyhow::Resu
     if destino.exists() {
         return Ok(());
     }
-    std::fs::write(&destino, cuerpo)?;
-    Ok(())
+    let temporal = dir.join(format!(".{nombre}.{}.tmp", uuid::Uuid::new_v4()));
+    let mut fichero = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temporal)?;
+    fichero.write_all(cuerpo.as_bytes())?;
+    fichero.sync_all()?;
+    drop(fichero);
+    match std::fs::rename(&temporal, &destino) {
+        Ok(()) => Ok(()),
+        Err(_) if destino.exists() => {
+            let _ = std::fs::remove_file(&temporal);
+            Ok(())
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&temporal);
+            Err(e.into())
+        }
+    }
 }
 
 #[cfg(test)]
@@ -222,8 +254,9 @@ mod tests {
         let central = tempfile::tempdir().unwrap();
         let store = Store::in_memory().unwrap();
         store.create_entry(&nueva("mi-app", "Titulo"), chrono::Utc::now()).unwrap();
-        // Un caracter que Windows no admite en una ruta: create_dir_all falla.
-        store.set_repo_path("mi-app", Some("Z:/no/exi<>ste")).unwrap();
+        // Un hijo bajo un fichero existente falla en todos los sistemas.
+        let archivo = tempfile::NamedTempFile::new().unwrap();
+        store.set_repo_path("mi-app", Some(archivo.path().to_str().unwrap())).unwrap();
 
         let n = exportar_pendientes(&store, central.path().to_str()).unwrap();
 
@@ -267,6 +300,18 @@ mod tests {
 
         assert_eq!(exportar_pendientes(&store, central.path().to_str()).unwrap(), 3);
         assert_eq!(cuantos(central.path()), 3);
+    }
+
+    #[test]
+    fn drena_mas_de_un_lote_de_pendientes() {
+        let central = tempfile::tempdir().unwrap();
+        let store = Store::in_memory().unwrap();
+        for i in 0..201 {
+            store.create_entry(&nueva("mi-app", &format!("Titulo {i}")), chrono::Utc::now()).unwrap();
+        }
+
+        assert_eq!(exportar_pendientes(&store, central.path().to_str()).unwrap(), 201);
+        assert!(store.entradas_pendientes(1).unwrap().is_empty());
     }
 
     #[test]
