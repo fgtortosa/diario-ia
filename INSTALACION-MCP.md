@@ -734,10 +734,25 @@ cambiarlo. Conviene saber qué hace de verdad cada dirección:
 El botón lo advierte en su `title`. Es la herramienta que se pidió; impedirlo sería
 quitarla.
 
-Este endpoint (`PUT /api/v1/entries/{id}/exported`) va con la **lectura** y no con la
-escritura: no crea ni modifica contenido, solo cambia una marca de control. Quien puede
-leer el diario entero —con sus prompts— puede cambiar una bandera. Ponerlo bajo la API key
-dejaría el botón inservible desde la web, que no tiene clave ni debe tenerla.
+### Y por qué el botón pide una clave
+
+`PUT /api/v1/entries/{id}/exported` **exige API key**, como cualquier otra escritura. No es
+una marca inocua: desmarcar hace que el servidor escriba ficheros en repositorios del
+disco, y marcar suprime para siempre la exportación de esa entrada.
+
+Eso importa porque los dos valores por defecto juegan en contra: `require_viewer` **no
+comprueba nada** mientras no exista `DIARIO_VIEWER_TOKEN`, y el bind por defecto es
+`0.0.0.0:8787`. Dejar ese endpoint del lado de la lectura significaría que cualquiera que
+alcance el puerto puede provocar escrituras en disco y pérdida silenciosa de registros.
+
+Para que el botón de la web funcione en una instancia local hay una opción **explícita**:
+
+```powershell
+.\diario.exe serve --marcado-abierto        # o DIARIO_MARCADO_ABIERTO=1
+```
+
+Apagada por defecto, y conviene encenderla solo junto a `--bind 127.0.0.1:8787`. Que la
+interfaz sea cómoda no puede decidir dónde está el límite de permisos.
 
 ### Filtrar
 

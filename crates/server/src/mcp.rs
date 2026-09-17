@@ -242,6 +242,7 @@ mod tests {
                 viewer_token: None,
                 tareas_dir: None,
                 log_ops: false,
+                marcado_abierto: false,
             }),
             avisar_exportador: Arc::new(tokio::sync::Notify::new()),
         };

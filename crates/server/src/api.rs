@@ -18,23 +18,35 @@ use crate::state::{blocking, AppState};
 use crate::static_files::static_handler;
 
 pub fn router(state: AppState) -> Router {
-    let read = Router::new()
+    let mut read = Router::new()
         .route("/applications", get(list_applications))
         .route("/entries", get(query_entries))
         .route("/entries/{id}", get(get_entry))
         .route("/tags", get(list_tags))
-        // Marcar el estado de exportacion va con la lectura y no con la
-        // escritura a proposito: no crea ni modifica contenido, solo cambia una
-        // marca de control. Quien puede leer el diario entero -con sus prompts-
-        // puede cambiar una bandera; exigir API key aqui dejaria el boton
-        // inservible desde la web, que no tiene ninguna ni debe tenerla.
-        .route("/entries/{id}/exported", put(set_exported))
-        .route("/stats", get(stats))
-        .route_layer(from_fn_with_state(state.clone(), require_viewer));
+        .route("/stats", get(stats));
 
-    let write = Router::new()
-        .route("/entries", post(create_entry))
-        .route_layer(from_fn_with_state(state.clone(), require_write_key));
+    let mut write = Router::new().route("/entries", post(create_entry));
+
+    // Marcar el estado de exportacion exige API key, como cualquier escritura.
+    //
+    // No es una marca inocua: desmarcar hace que el exportador escriba ficheros
+    // en repositorios del disco, y marcar suprime para siempre la exportacion de
+    // esa entrada. Con require_viewer inactivo mientras no haya
+    // DIARIO_VIEWER_TOKEN, y el bind por defecto en 0.0.0.0, ponerlo del lado de
+    // la lectura significaba que cualquiera en la red podia provocar escrituras
+    // en disco y perdida silenciosa de registros.
+    //
+    // El boton de la web necesita que este abierto, asi que hay una opcion
+    // explicita para instancias locales. Apagada por defecto: que la interfaz
+    // sea comoda no puede decidir donde esta el limite de permisos.
+    if state.config.marcado_abierto {
+        read = read.route("/entries/{id}/exported", put(set_exported));
+    } else {
+        write = write.route("/entries/{id}/exported", put(set_exported));
+    }
+
+    let read = read.route_layer(from_fn_with_state(state.clone(), require_viewer));
+    let write = write.route_layer(from_fn_with_state(state.clone(), require_write_key));
 
     let api = read.merge(write);
 
@@ -202,6 +214,7 @@ mod tests {
                 viewer_token: None,
                 tareas_dir: None,
                 log_ops: false,
+                marcado_abierto: false,
             }),
             avisar_exportador: Arc::new(tokio::sync::Notify::new()),
         }
@@ -255,14 +268,7 @@ mod tests {
             .unwrap();
     }
 
-    #[tokio::test]
-    async fn marcar_exportacion_no_exige_api_key() {
-        // La web no tiene API key ni debe tenerla: si este endpoint viviera en
-        // el router de escritura, el boton de marcar daria 401 desde el
-        // navegador. Paso exactamente eso al probarlo.
-        let state = test_state();
-        let app = router(state.clone());
-        // Se crea la entrada antes de que existan keys (modo bootstrap).
+    async fn crear_entrada_en_bootstrap(app: &axum::Router) {
         app.clone()
             .oneshot(
                 Request::builder()
@@ -274,23 +280,59 @@ mod tests {
             )
             .await
             .unwrap();
-        // Con una key creada, la escritura queda cerrada; la marca no.
+    }
+
+    fn peticion_de_marcado(exportada: bool) -> Request<Body> {
+        Request::builder()
+            .method("PUT")
+            .uri("/api/v1/entries/1/exported")
+            .header("content-type", "application/json")
+            .body(Body::from(format!(r#"{{"exported":{exportada}}}"#)))
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn marcar_exportacion_exige_api_key_por_defecto() {
+        // Marcar no es inocuo: desmarcar provoca escrituras en disco y marcar
+        // suprime la exportacion. Con la lectura abierta por defecto y el bind
+        // en 0.0.0.0, dejarlo sin credencial es acceso roto.
+        let state = test_state();
+        let app = router(state.clone());
+        crear_entrada_en_bootstrap(&app).await;
         state.store.create_api_key("k", "write").unwrap();
 
-        let resp = app
-            .oneshot(
-                Request::builder()
-                    .method("PUT")
-                    .uri("/api/v1/entries/1/exported")
-                    .header("content-type", "application/json")
-                    .body(Body::from(r#"{"exported":false}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        // Se marca como exportada, que es la direccion en la que el cambio se
+        // nota: la entrada nace pendiente, asi que desmarcarla no probaria nada.
+        let resp = app.oneshot(peticion_de_marcado(true)).await.unwrap();
+
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            state.store.entradas_pendientes(10).unwrap().len(),
+            1,
+            "el 401 no impidio el cambio"
+        );
+    }
+
+    #[tokio::test]
+    async fn con_marcado_abierto_no_exige_api_key() {
+        let mut config = (*test_state().config).clone();
+        config.marcado_abierto = true;
+        let state = AppState {
+            store: Store::in_memory().unwrap(),
+            config: Arc::new(config),
+            avisar_exportador: Arc::new(tokio::sync::Notify::new()),
+        };
+        let app = router(state.clone());
+        crear_entrada_en_bootstrap(&app).await;
+        state.store.create_api_key("k", "write").unwrap();
+
+        let resp = app.oneshot(peticion_de_marcado(true)).await.unwrap();
 
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(state.store.entradas_pendientes(10).unwrap().len(), 1);
+        assert!(
+            state.store.entradas_pendientes(10).unwrap().is_empty(),
+            "con marcado abierto el cambio deberia haberse aplicado"
+        );
     }
 
     #[tokio::test]

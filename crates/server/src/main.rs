@@ -73,6 +73,10 @@ struct ServeArgs {
     /// Traza por consola cada operacion del diario, venga de REST o del MCP.
     #[arg(long, env = "DIARIO_LOG_OPS")]
     log_ops: bool,
+    /// Permite marcar el estado de exportacion sin API key. Solo para
+    /// instancias locales: la operacion provoca escrituras en disco.
+    #[arg(long, env = "DIARIO_MARCADO_ABIERTO")]
+    marcado_abierto: bool,
 }
 
 #[derive(Parser)]
@@ -186,6 +190,7 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
         viewer_token: args.viewer_token.filter(|t| !t.is_empty()),
         tareas_dir: args.tareas_dir,
         log_ops: args.log_ops,
+        marcado_abierto: args.marcado_abierto,
     };
     let store = Store::open(&config.db_path)?;
     let state = AppState {

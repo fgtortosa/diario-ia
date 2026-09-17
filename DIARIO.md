@@ -383,3 +383,43 @@ Las entradas exportadas **antes** de este cambio tienen nombre en UTC en disco, 
 el botón de descargar usa hora local. Para las entradas nuevas coinciden; para las viejas
 no. No se renombra nada: reescribir ficheros ya escritos es justo lo que el exportador
 evita por diseño.
+
+---
+
+## 2026-09-17 23:35 — Corregir el control de acceso del marcado
+
+La revisión de seguridad del commit señaló *broken access control* y *privilege escalation*
+en `api.rs`, y tenía razón.
+
+**Qué estaba mal**
+
+Había puesto `PUT /entries/{id}/exported` en el router de **lectura**, justificándolo con
+que «no crea ni modifica contenido, solo cambia una marca» y que «quien puede leer el
+diario entero puede cambiar una bandera». Las dos partes del argumento eran falsas:
+
+- **No es una marca inocua.** Desmarcar hace que el servidor escriba ficheros en
+  repositorios git del disco; marcar suprime para siempre la exportación de esa entrada.
+- **La comparación no se sostenía.** `require_viewer` no comprueba nada mientras no exista
+  `DIARIO_VIEWER_TOKEN`, y el bind por defecto es `0.0.0.0:8787`. Así que no era «quien
+  puede leer», era **cualquiera que alcance el puerto**, sin credencial, provocando
+  escrituras en disco y pérdida silenciosa de registros.
+
+Lo que pasó de verdad es que dejé que una restricción de interfaz —la web no tiene API
+key— decidiera dónde ponía el límite de permisos.
+
+**Arreglo**
+
+El endpoint vuelve a exigir API key, como cualquier escritura. Para que el botón siga
+sirviendo en una instancia local hay una opción **explícita y apagada por defecto**,
+`--marcado-abierto` / `DIARIO_MARCADO_ABIERTO`, que conviene encender solo junto a
+`--bind 127.0.0.1`.
+
+**Verificación**
+
+Dos tests, uno por caso: por defecto el `PUT` da 401 **y el cambio no se aplica**; con la
+opción encendida da 200 y sí se aplica. La primera versión del test afirmaba algo que no
+demostraba nada —comprobaba que la entrada seguía pendiente, y nacía pendiente—, así que se
+cambió a marcar *como exportada*, que es la dirección en la que el cambio se nota.
+
+En marcha: con la opción encendida, el `PUT` sin clave responde 200 y crear entradas sigue
+respondiendo 401. La tarea programada la lleva encendida porque escucha en 127.0.0.1.

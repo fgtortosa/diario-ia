@@ -21,6 +21,19 @@ pub struct ServerConfig {
     /// Modo log de operaciones (DIARIO_LOG_OPS): traza por consola cada
     /// operacion del diario, venga de REST o del MCP.
     pub log_ops: bool,
+    /// Permite marcar el estado de exportacion sin API key
+    /// (DIARIO_MARCADO_ABIERTO). **Apagado por defecto.**
+    ///
+    /// Marcar no es una operacion inocua: desmarcar hace que el servidor
+    /// escriba ficheros en repositorios del disco, y marcar suprime para
+    /// siempre la exportacion de esa entrada. Con la lectura abierta por
+    /// defecto y el bind en 0.0.0.0, dejarlo accesible sin credencial
+    /// significaria que cualquiera en la red puede provocar escrituras en disco
+    /// y perdida silenciosa de registros.
+    ///
+    /// Se enciende a conciencia en una instancia local, que es donde el boton
+    /// de la web tiene sentido.
+    pub marcado_abierto: bool,
 }
 
 impl ServerConfig {
@@ -61,6 +74,7 @@ mod tests {
             viewer_token: None,
             tareas_dir: tareas.map(|s| s.to_string()),
             log_ops: false,
+            marcado_abierto: false,
         }
     }
 
