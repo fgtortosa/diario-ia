@@ -98,6 +98,9 @@ pub struct Entry {
     pub duration_ms: Option<i64>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
+    /// Cuando se escribio en los repositorios. None = pendiente de exportar.
+    #[serde(default)]
+    pub exported_at: Option<DateTime<Utc>>,
     pub attachments: Vec<Attachment>,
 }
 
@@ -125,6 +128,10 @@ pub struct EntryQuery {
     /// Cursor de paginacion: id maximo devuelto en la pagina anterior.
     #[serde(default)]
     pub cursor: Option<i64>,
+    /// Estado de exportacion: Some(true) solo exportadas, Some(false) solo
+    /// pendientes, None todas.
+    #[serde(default)]
+    pub exported: Option<bool>,
 }
 
 /// Pagina de resultados de entradas.

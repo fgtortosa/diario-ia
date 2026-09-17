@@ -171,6 +171,7 @@ mod tests {
             duration_ms: None,
             metadata: None,
             created_at: chrono::Utc.with_ymd_and_hms(2026, 9, 17, 12, 58, 51).unwrap(),
+            exported_at: None,
             attachments: vec![],
         }
     }

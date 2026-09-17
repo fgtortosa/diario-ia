@@ -184,6 +184,22 @@ impl Store {
 
     /// Cuantas entradas quedan sin exportar, por aplicacion. En regimen normal
     /// deberia estar vacio: si no lo esta, algo fallo al escribir.
+    /// Marca o desmarca a mano el estado de exportacion de una entrada.
+    ///
+    /// Desmarcarla hace que el exportador la vuelva a escribir en la siguiente
+    /// pasada, salvo que el fichero ya exista, en cuyo caso lo respeta.
+    /// Marcarla sin que el fichero exista la deja sin escribir para siempre.
+    /// Es la herramienta que se pide; avisar de eso le toca a la interfaz.
+    pub fn marcar_exportacion_manual(&self, id: i64, exportada: bool) -> AppResult<bool> {
+        let conn = self.pool.get()?;
+        let valor: Option<String> = exportada.then(|| Utc::now().to_rfc3339());
+        let filas = conn.execute(
+            "UPDATE entry SET exported_at = ?1 WHERE id = ?2",
+            params![valor, id],
+        )?;
+        Ok(filas > 0)
+    }
+
     /// Etiquetas con cuantas entradas las llevan, por nombre.
     pub fn contar_etiquetas(&self) -> AppResult<Vec<TagCount>> {
         let conn = self.pool.get()?;
@@ -363,6 +379,11 @@ impl Store {
             wheres.push("substr(e.created_at,1,10) <= ?".into());
             args.push(Value::Text(to.to_string()));
         }
+        if let Some(exportada) = q.exported {
+            wheres.push(
+                if exportada { "e.exported_at IS NOT NULL" } else { "e.exported_at IS NULL" }.into(),
+            );
+        }
         if let Some(tag) = non_empty(&q.tag) {
             wheres.push("EXISTS (SELECT 1 FROM entry_tag t WHERE t.entry_id = e.id AND t.tag = ?)".into());
             args.push(Value::Text(tag.to_string()));
@@ -431,12 +452,14 @@ impl Store {
             .query_row(
                 "SELECT e.id, a.slug, a.name, e.agent_name, e.model, e.title, e.prompt,
                         e.task_summary, e.response_markdown, e.response_html, e.status,
-                        e.tokens_input, e.tokens_output, e.duration_ms, e.metadata_json, e.created_at
+                        e.tokens_input, e.tokens_output, e.duration_ms, e.metadata_json, e.created_at,
+                        e.exported_at
                  FROM entry e JOIN application a ON a.id = e.application_id
                  WHERE e.id = ?1",
                 [id],
                 |r| {
                     let created: String = r.get(15)?;
+                    let exportada: Option<String> = r.get(16)?;
                     let metadata: Option<String> = r.get(14)?;
                     Ok(Entry {
                         id: r.get(0)?,
@@ -455,6 +478,7 @@ impl Store {
                         duration_ms: r.get(13)?,
                         metadata: metadata.and_then(|s| serde_json::from_str(&s).ok()),
                         created_at: parse_dt(&created).unwrap_or_else(Utc::now),
+                        exported_at: exportada.as_deref().and_then(parse_dt),
                         tags: Vec::new(),
                         attachments: Vec::new(),
                     })
@@ -627,6 +651,16 @@ fn non_empty(opt: &Option<String>) -> Option<&str> {
 }
 
 fn parse_dt(s: &str) -> Option<DateTime<Utc>> {
+    // Casi todo se guarda en RFC3339, pero la migracion 0002 marco las entradas
+    // antiguas con datetime('now') de SQLite, que es 'AAAA-MM-DD HH:MM:SS' en
+    // UTC. Sin este segundo intento esas entradas apareceran como no exportadas
+    // en la interfaz, que es justo lo contrario de lo que son.
+    if let Some(d) = DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc)) {
+        return Some(d);
+    }
+    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(DateTime::from_naive_utc_and_offset(naive, Utc));
+    }
     DateTime::parse_from_rfc3339(s)
         .ok()
         .map(|d| d.with_timezone(&Utc))
@@ -736,6 +770,55 @@ mod tests {
         assert_eq!(slugify("Portal Alumnos"), "portal-alumnos");
         assert_eq!(slugify("  UACloud 2026!! "), "uacloud-2026");
         assert_eq!(slugify("///"), "sin-nombre");
+    }
+
+    #[test]
+    fn marcar_y_desmarcar_a_mano_cambia_la_cola() {
+        let store = Store::in_memory().unwrap();
+        let id = store.create_entry(&sample_entry("app", "Una"), Utc::now()).unwrap();
+
+        assert!(store.marcar_exportacion_manual(id, true).unwrap());
+        assert!(store.entradas_pendientes(10).unwrap().is_empty());
+        assert!(store.get_entry(id).unwrap().unwrap().exported_at.is_some());
+
+        assert!(store.marcar_exportacion_manual(id, false).unwrap());
+        assert_eq!(store.entradas_pendientes(10).unwrap().len(), 1);
+        assert!(store.get_entry(id).unwrap().unwrap().exported_at.is_none());
+    }
+
+    #[test]
+    fn marcar_una_entrada_inexistente_devuelve_false() {
+        let store = Store::in_memory().unwrap();
+        assert!(!store.marcar_exportacion_manual(9999, true).unwrap());
+    }
+
+    #[test]
+    fn el_filtro_de_estado_separa_exportadas_y_pendientes() {
+        let store = Store::in_memory().unwrap();
+        let a = store.create_entry(&sample_entry("app", "Exportada"), Utc::now()).unwrap();
+        store.create_entry(&sample_entry("app", "Pendiente"), Utc::now()).unwrap();
+        store.marcar_exportacion_manual(a, true).unwrap();
+
+        let cuenta = |e: Option<bool>| {
+            store
+                .query_entries(&EntryQuery { exported: e, ..Default::default() })
+                .unwrap()
+                .entries
+                .len()
+        };
+
+        assert_eq!(cuenta(Some(true)), 1);
+        assert_eq!(cuenta(Some(false)), 1);
+        assert_eq!(cuenta(None), 2);
+    }
+
+    #[test]
+    fn parse_dt_acepta_el_formato_de_sqlite_de_la_migracion() {
+        // La migracion 0002 marco las entradas antiguas con datetime('now'),
+        // que no es RFC3339. Sin esto saldrian como no exportadas.
+        assert!(parse_dt("2026-09-17 18:30:48").is_some());
+        assert!(parse_dt("2026-09-17T18:30:48+00:00").is_some());
+        assert!(parse_dt("ni de lejos").is_none());
     }
 
     #[test]

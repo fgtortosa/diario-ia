@@ -2,7 +2,7 @@
 
 use axum::extract::{Path, Query, State};
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use tower_http::cors::CorsLayer;
@@ -27,6 +27,7 @@ pub fn router(state: AppState) -> Router {
 
     let write = Router::new()
         .route("/entries", post(create_entry))
+        .route("/entries/{id}/exported", put(set_exported))
         .route_layer(from_fn_with_state(state.clone(), require_write_key));
 
     let api = read.merge(write);
@@ -38,6 +39,33 @@ pub fn router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+#[derive(serde::Deserialize)]
+struct EstadoExportacion {
+    exported: bool,
+}
+
+/// Marca o desmarca a mano el estado de exportacion de una entrada.
+///
+/// Desmarcarla hace que el exportador la reescriba en la siguiente pasada; el
+/// fichero ya existente se respeta. Marcarla sin que el fichero exista la deja
+/// sin escribir. La interfaz lo advierte.
+async fn set_exported(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(cuerpo): Json<EstadoExportacion>,
+) -> AppResult<Json<serde_json::Value>> {
+    let store = state.store.clone();
+    let existe = blocking(move || store.marcar_exportacion_manual(id, cuerpo.exported)).await?;
+    if !existe {
+        return Err(AppError::NotFound);
+    }
+    // Al desmarcar, se despierta al exportador para que la recoja ya.
+    if !cuerpo.exported {
+        state.avisar_exportador.notify_one();
+    }
+    Ok(Json(serde_json::json!({ "id": id, "exported": cuerpo.exported })))
 }
 
 async fn list_tags(State(state): State<AppState>) -> AppResult<Json<Vec<TagCount>>> {
