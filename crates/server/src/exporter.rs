@@ -9,6 +9,7 @@
 //! pasada lo escribe.
 
 use crate::storage::Store;
+use chrono::Local;
 use diario_shared::Entry;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ use std::path::{Path, PathBuf};
 pub fn nombre_fichero(entry: &Entry) -> String {
     format!(
         "{}-{}-{}.md",
-        entry.created_at.format("%Y%m%d-%H%M%S"),
+        entry.created_at.with_timezone(&Local).format("%Y%m%d-%H%M%S"),
         entry.application_slug,
         entry.id
     )
@@ -178,7 +179,16 @@ mod tests {
     fn el_nombre_lleva_fecha_hora_aplicacion_e_id() {
         assert_eq!(
             nombre_fichero(&entrada_de_prueba()),
-            "20260917-125851-redes-ice-netcore-19.md"
+            // En hora local: la entrada de prueba es 12:58:51 UTC, y el nombre
+            // depende de la zona de la maquina, asi que se compara contra el
+            // mismo calculo en vez de contra una cadena fija.
+            format!(
+                "{}-redes-ice-netcore-19.md",
+                entrada_de_prueba()
+                    .created_at
+                    .with_timezone(&chrono::Local)
+                    .format("%Y%m%d-%H%M%S")
+            )
         );
     }
 
