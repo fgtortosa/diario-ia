@@ -126,7 +126,6 @@ es solo un puente y sin `diario serve` levantado `log_task` falla.
 
 ---
 
-<<<<<<< HEAD
 ## 2026-09-17 13:55 — Fijada la regla de nombres de `application`
 
 El documento llevaba desde su creación un bloque `PENDIENTE` con una propuesta de lista
@@ -187,7 +186,9 @@ Se incorporan las observaciones válidas de la revisión del PR #3.
 
 - Comprobado que la rama no contiene errores de espacios y que la búsqueda de la guía ya
   no encuentra el ejemplo REST contradictorio.
-=======
+
+---
+
 ## 2026-09-17 20:30 — Exportación automática del diario a los repositorios
 
 El diario pasa a ser la fuente única: el agente llama a `log_task` y el propio servidor
@@ -288,4 +289,3 @@ etiquetas se pintaban como texto muerto y no había forma de filtrar por ellas d
   `#gitignore ×` en la cabecera; la × lo quita y vuelven las 23. Lo importante es que la
   URL sigue siendo `/` tras pulsar la etiqueta: el `stop_propagation` funciona y no navega
   al detalle. Sin errores de consola.
->>>>>>> origin/main
