@@ -563,7 +563,7 @@ curl -X POST http://127.0.0.1:8787/api/v1/entries \
   -H 'Authorization: Bearer dk_tu_token' \
   -H 'content-type: application/json' \
   -d '{
-    "application": "uaRedesIce",
+    "application": "redes-ice-netcore",
     "agent": "script-ci",
     "title": "Publicación 2.4.1 en preproducción",
     "prompt": "…",
@@ -583,25 +583,43 @@ curl -X POST http://127.0.0.1:8787/api/v1/entries \
 | `list_entries(application?, from?, to?, limit?)`                                        | Explorar el diario            |
 | `get_entry(id)`                                                                         | Recuperar una entrada concreta|
 
+### `application`: el nombre de la carpeta del repositorio
+
 `application` es la unidad de agrupación y tiene que ser **el mismo nombre siempre**.
 `uaRedesIce`, `uaredesice` y `RedesICE` son tres aplicaciones distintas para el diario,
-y una vez dispersas ya no se juntan solas.
+y una vez dispersas ya no se juntan solas: la API no tiene forma de fusionarlas.
 
-<!-- PENDIENTE: fijar aquí la lista canónica de nombres de `application`, para que
-     ningún agente se los invente. Propuesta de partida según los repositorios:
+La regla, para que ningún agente tenga que inventárselo:
 
-     | Repositorio                     | `application` |
-     |---------------------------------|---------------|
-     | redesice-netcore / redesice-mvc | uaRedesIce    |
-     | matricula2-netcore              | uaMatricula   |
-     | accesibilidad-netcore           | Accesibilidad |
-     | directorio-netcore              | Directorio    |
-     | otro-noticias-netcore           | OtriNoticias  |
-     | componentes/vue/uacloud2026     | uaCloud2026   |
+> **`application` = el nombre de la carpeta del repositorio, tal cual.**
 
-     Decisión abierta: ¿`-mvc` y `-netcore` comparten nombre (historia única de la
-     aplicación, que es lo que interesa durante una migración) o van separados
-     (historia por base de código)? -->
+Nada más. No se embellece, no se traduce y, sobre todo, **no se usa el nombre real de la
+aplicación**. Esa es la parte que se presta a error, porque conviven dos nombres
+distintos para la misma cosa:
+
+| Nombre | Qué es | Dónde manda |
+|---|---|---|
+| `uaRedesIce` | el nombre real de la aplicación | `.csproj`, `IdApp`, `Web.config`, destino de despliegue |
+| `redes-ice-netcore` | el nombre interno | carpeta del repositorio y **`application` del diario** |
+
+En este workspace las carpetas siguen una convención que ayuda: sin el prefijo `ua`, en
+minúsculas, las mayúsculas internas aplanadas a guiones y con sufijo `-netcore` o `-mvc`.
+Así el nombre de la carpeta ya te dice qué es la cosa sin abrirla.
+
+**Consecuencia buscada: `-mvc` y `-netcore` son aplicaciones distintas en el diario.** No
+es un descuido. Son bases de código distintas, con sus propios commits y sus propios
+despliegues, y durante una migración interesa poder mirarlas por separado. Si algún día
+quieres la historia unificada, se consigue con `tags`, que sí se pueden cruzar.
+
+Los **nugets** van uno por paquete, con su `PackageId` (`ClaseToken`, `ClaseOracleBD3`,
+`PlantillaUACloud.Core`). Casi siempre coincide con la carpeta; cuando no, manda el
+`PackageId`, que es lo que ve quien lo consume desde el feed.
+
+> **Cuidado al renombrar.** Atar `application` a la carpeta tiene un precio: renombrar
+> una carpeta **parte en dos la historia de esa aplicación** y no hay forma de volver a
+> juntarla. Si hay que renombrar, el momento barato es cuando el diario aún está vacío;
+> después, deja constancia en el `DIARIO.md` del repositorio para que el corte sea
+> rastreable.
 
 ---
 

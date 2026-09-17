@@ -126,6 +126,69 @@ es solo un puente y sin `diario serve` levantado `log_task` falla.
 
 ---
 
+## 2026-09-17 13:55 — Fijada la regla de nombres de `application`
+
+El documento llevaba desde su creación un bloque `PENDIENTE` con una propuesta de lista
+canónica y una pregunta abierta. Queda resuelto, y no con una lista sino con una regla.
+
+**La regla**
+
+`application` = el nombre de la carpeta del repositorio, tal cual.
+
+Se eligió una regla y no una tabla a propósito: una lista hay que mantenerla y se queda
+vieja en cuanto aparece una aplicación nueva; la regla se aplica sola y no puede
+desincronizarse del disco.
+
+**Lo que había que aclarar**
+
+Conviven dos nombres para la misma cosa, y confundirlos era el riesgo real:
+
+- `uaRedesIce` — el nombre **real** de la aplicación: `.csproj`, `IdApp`, `Web.config`,
+  destino de despliegue. No se toca nunca.
+- `redes-ice-netcore` — el nombre **interno**: carpeta del repositorio y `application`
+  del diario.
+
+Renombrar la carpeta no afecta al primero, y por eso no rompe despliegues: `build.ps1`
+deduce el nombre de la aplicación del `.csproj`, no de la carpeta.
+
+**Decisiones**
+
+- **`-mvc` y `-netcore` son aplicaciones distintas en el diario.** Es la consecuencia
+  directa de atar el nombre a la carpeta, y es la buscada: son bases de código distintas,
+  con commits y despliegues propios, y durante una migración interesa mirarlas por
+  separado. La vista unificada, si hace falta, se consigue con `tags`, que sí se cruzan.
+- **Los nugets, uno por paquete**, con su `PackageId`. Cuando el `PackageId` y la carpeta
+  no coinciden manda el `PackageId`, que es lo que ve quien lo consume desde el feed.
+- **Queda escrito el precio de la regla**: renombrar una carpeta parte en dos la historia
+  de esa aplicación en el diario y no hay forma de volver a juntarla.
+
+**Contexto**
+
+La regla se fijó el mismo día en que las carpetas de `aplicaciones/` se aplanaron y
+renombraron (fuera el prefijo `ua`, mayúsculas a guiones, sufijo `-netcore`/`-mvc`),
+aprovechando que el diario estaba prácticamente vacío. Era el momento más barato: después,
+cada renombrado cuesta un corte en la historia.
+
+---
+
+## 2026-09-17 21:25 — Correcciones de la guía de nombres de `application`
+
+Se incorporan las observaciones válidas de la revisión del PR #3.
+
+**Acciones realizadas**
+
+- El ejemplo REST usa ahora `redes-ice-netcore`, el nombre de carpeta, en vez del nombre
+  real `uaRedesIce` que la propia regla prohíbe usar como `application`.
+- La entrada anterior del diario habla de dos nombres, los dos que enumera, y deja de
+  afirmar incorrectamente que son tres.
+
+**Verificación**
+
+- Comprobado que la rama no contiene errores de espacios y que la búsqueda de la guía ya
+  no encuentra el ejemplo REST contradictorio.
+
+---
+
 ## 2026-09-17 20:30 — Exportación automática del diario a los repositorios
 
 El diario pasa a ser la fuente única: el agente llama a `log_task` y el propio servidor
