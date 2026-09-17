@@ -4,6 +4,7 @@ mod api;
 mod auth;
 mod config;
 mod error;
+mod exporter;
 mod mcp;
 mod render;
 mod state;
