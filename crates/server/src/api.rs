@@ -22,12 +22,17 @@ pub fn router(state: AppState) -> Router {
         .route("/entries", get(query_entries))
         .route("/entries/{id}", get(get_entry))
         .route("/tags", get(list_tags))
+        // Marcar el estado de exportacion va con la lectura y no con la
+        // escritura a proposito: no crea ni modifica contenido, solo cambia una
+        // marca de control. Quien puede leer el diario entero -con sus prompts-
+        // puede cambiar una bandera; exigir API key aqui dejaria el boton
+        // inservible desde la web, que no tiene ninguna ni debe tenerla.
+        .route("/entries/{id}/exported", put(set_exported))
         .route("/stats", get(stats))
         .route_layer(from_fn_with_state(state.clone(), require_viewer));
 
     let write = Router::new()
         .route("/entries", post(create_entry))
-        .route("/entries/{id}/exported", put(set_exported))
         .route_layer(from_fn_with_state(state.clone(), require_write_key));
 
     let api = read.merge(write);
@@ -230,6 +235,44 @@ mod tests {
             .await
             .expect("el exportador no recibio el aviso")
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn marcar_exportacion_no_exige_api_key() {
+        // La web no tiene API key ni debe tenerla: si este endpoint viviera en
+        // el router de escritura, el boton de marcar daria 401 desde el
+        // navegador. Paso exactamente eso al probarlo.
+        let state = test_state();
+        let app = router(state.clone());
+        // Se crea la entrada antes de que existan keys (modo bootstrap).
+        app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/entries")
+                    .header("content-type", "application/json")
+                    .body(Body::from(post_entry_body("mi-app", "Titulo")))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // Con una key creada, la escritura queda cerrada; la marca no.
+        state.store.create_api_key("k", "write").unwrap();
+
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/v1/entries/1/exported")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"exported":false}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(state.store.entradas_pendientes(10).unwrap().len(), 1);
     }
 
     #[tokio::test]

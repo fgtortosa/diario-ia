@@ -706,6 +706,78 @@ de la migración.**
 ---
 
 
+## Desde la web: descargar, marcar y filtrar
+
+### Descargar una entrada
+
+En el detalle, **Descargar .md** baja la entrada como fichero markdown, con el mismo
+nombre y el mismo contenido que escribe el exportador. No es parecido: es la misma
+función (`markdown_de`, en el crate `shared`), así que no pueden divergir.
+
+**PDF** abre el diálogo de impresión del navegador, que es también el de *guardar como
+PDF*. No hay generador de PDF en el binario a propósito: meterlo significaría maquetar a
+mano lo que el navegador ya sabe hacer, o empaquetar un Chrome headless en un ejecutable
+que hoy son 10 MB y presume de no tener dependencias de sistema. Lo que sí hay es una hoja
+`@media print` que imprime el contenido y no la aplicación: sin barra lateral, sin
+cabecera, sin botones, con el prompt desplegado y sin partir bloques de código a mitad.
+
+### Marcar el estado de exportación
+
+El detalle muestra si la entrada está exportada y desde cuándo, con un botón para
+cambiarlo. Conviene saber qué hace de verdad cada dirección:
+
+| Acción | Consecuencia |
+|---|---|
+| **Marcar sin exportar** | El exportador la reescribe en la siguiente pasada. Si el fichero ya existe, lo respeta y solo vuelve a marcarla |
+| **Marcar exportada** | Deja de escribirse. Si el fichero no existe, esa entrada se queda sin exportar y nadie volverá a intentarlo |
+
+El botón lo advierte en su `title`. Es la herramienta que se pidió; impedirlo sería
+quitarla.
+
+Este endpoint (`PUT /api/v1/entries/{id}/exported`) va con la **lectura** y no con la
+escritura: no crea ni modifica contenido, solo cambia una marca de control. Quien puede
+leer el diario entero —con sus prompts— puede cambiar una bandera. Ponerlo bajo la API key
+dejaría el botón inservible desde la web, que no tiene clave ni debe tenerla.
+
+### Filtrar
+
+La barra lateral tiene ahora **Etiquetas**, con cuántas entradas lleva cada una. Antes solo
+se podía filtrar por etiqueta si encontrabas una entrada que la llevara y la pulsabas.
+
+Y un conmutador **Solo sin exportar**, que es la forma de ver de un vistazo lo que el
+exportador no ha escrito. En régimen normal debería estar vacío.
+
+---
+
+## Modo log
+
+```powershell
+.\diario.exe serve --log-ops        # o DIARIO_LOG_OPS=1
+```
+
+Traza por consola cada operación del diario, indicando de dónde viene:
+
+```
+INFO [rest] crear_entrada id=1
+INFO [rest] consultar_entradas n=1
+INFO [rest] listar_etiquetas n=1
+INFO [rest] marcar_exportacion id=1 exportada=false
+INFO [mcp]  consultar_entrada id=1
+```
+
+**Nunca se traza el prompt ni la respuesta.** Son largos y son justo lo que no quieres
+volcado en una consola compartida; la traza lleva lo mínimo para saber qué pasó y sobre qué.
+
+Distinguir el MCP de la web tiene truco, porque el MCP es un proceso aparte que reenvía por
+REST: sus operaciones llegan al servidor como cualquier otra. Se resuelve con una cabecera
+`x-diario-origen` que pone el puente y que el servidor lee.
+
+> **Ojo con la tarea programada.** Si el servidor corre como tarea de Windows, corre oculto
+> y su consola no la ve nadie. Para usar el modo log, arráncalo a mano en una terminal, o
+> redirige su salida a un fichero en la acción de la tarea.
+
+---
+
 ## Comprobar que funciona
 
 **Que el servidor responde:**
