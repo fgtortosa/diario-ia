@@ -23,7 +23,8 @@ Agente ──stdio──▶ diario mcp ──REST──▶ diario serve ──�
 
 ```powershell
 cd <repo>\diario-ia
-just build                      # o: cargo build --release
+just build                      # compila la SPA y el servidor
+# Solo para el binario del servidor/MCP: cargo build --release -p diario-server
 ```
 
 Queda en `target\release\diario.exe`. Es un único ejecutable estático —SQLite va
