@@ -3,7 +3,7 @@
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
-use diario_shared::{Application, Entry, EntrySummary};
+use diario_shared::{Application, Entry, EntrySummary, TagCount};
 
 use crate::api::{self, EntryFilters};
 use crate::ffi::{current_path, on_popstate, push_path, render_diagrams};
@@ -31,6 +31,8 @@ pub fn App() -> impl IntoView {
     let to = RwSignal::new(String::new());
     let search = RwSignal::new(String::new());
     let selected_tag = RwSignal::new(Option::<String>::None);
+    let tags = RwSignal::new(Vec::<TagCount>::new());
+    let solo_pendientes = RwSignal::new(false);
     let entries = RwSignal::new(Vec::<EntrySummary>::new());
     let loading = RwSignal::new(false);
     let view = RwSignal::new(parse_route(&current_path()));
@@ -43,6 +45,12 @@ pub fn App() -> impl IntoView {
         }
     });
 
+    spawn_local(async move {
+        if let Ok(t) = api::fetch_tags().await {
+            tags.set(t);
+        }
+    });
+
     // Recarga las entradas cuando cambia cualquier filtro.
     Effect::new(move |_| {
         let f = EntryFilters {
@@ -51,6 +59,7 @@ pub fn App() -> impl IntoView {
             to: to.get(),
             search: search.get(),
             tag: selected_tag.get(),
+            exported: solo_pendientes.get().then_some(false),
         };
         loading.set(true);
         spawn_local(async move {
@@ -65,7 +74,7 @@ pub fn App() -> impl IntoView {
     view! {
         <div class="app">
             <Header search=search selected_tag=selected_tag />
-            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag />
+            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag tags=tags solo_pendientes=solo_pendientes />
             <main class="main">
                 {move || match view.get() {
                     View::List => view! { <Timeline entries=entries loading=loading view=view selected_tag=selected_tag /> }.into_any(),
@@ -107,6 +116,8 @@ fn Sidebar(
     from: RwSignal<String>,
     to: RwSignal<String>,
     selected_tag: RwSignal<Option<String>>,
+    tags: RwSignal<Vec<TagCount>>,
+    solo_pendientes: RwSignal<bool>,
 ) -> impl IntoView {
     view! {
         <aside class="sidebar">
@@ -138,6 +149,34 @@ fn Sidebar(
                         .collect_view()
                 }}
             </ul>
+            <h2>"Etiquetas"</h2>
+            <ul class="applist">
+                {move || {
+                    tags.get()
+                        .into_iter()
+                        .map(|t| {
+                            let nombre = t.tag.clone();
+                            let activa = nombre.clone();
+                            let clase = move || {
+                                if selected_tag.get().as_deref() == Some(activa.as_str()) {
+                                    "active"
+                                } else {
+                                    ""
+                                }
+                            };
+                            view! {
+                                <li
+                                    class=clase
+                                    on:click=move |_| selected_tag.set(Some(nombre.clone()))
+                                >
+                                    <span>{t.tag.clone()}</span>
+                                    <span class="count">{t.count}</span>
+                                </li>
+                            }
+                        })
+                        .collect_view()
+                }}
+            </ul>
             <h2>"Fechas"</h2>
             <div class="filters">
                 <label>"Desde"</label>
@@ -152,6 +191,14 @@ fn Sidebar(
                     prop:value=move || to.get()
                     on:input=move |ev| to.set(event_target_value(&ev))
                 />
+                <label class="check">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || solo_pendientes.get()
+                        on:change=move |ev| solo_pendientes.set(event_target_checked(&ev))
+                    />
+                    " Solo sin exportar"
+                </label>
                 <button
                     class="btn-clear"
                     on:click=move |_| {
@@ -159,6 +206,7 @@ fn Sidebar(
                         from.set(String::new());
                         to.set(String::new());
                         selected_tag.set(None);
+                        solo_pendientes.set(false);
                     }
                 >
                     "Limpiar filtros"

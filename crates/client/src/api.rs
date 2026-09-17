@@ -1,10 +1,35 @@
 //! Cliente HTTP contra la API REST del servidor central (mismo origen).
 
-use diario_shared::{Application, Entry, EntryPage};
+use diario_shared::{Application, Entry, EntryPage, TagCount};
 use gloo_net::http::Request;
 
 fn enc(s: &str) -> String {
     js_sys::encode_uri_component(s).as_string().unwrap_or_default()
+}
+
+pub async fn fetch_tags() -> Result<Vec<TagCount>, String> {
+    Request::get("/api/v1/tags")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Marca o desmarca a mano el estado de exportacion de una entrada.
+pub async fn set_exported(id: i64, exportada: bool) -> Result<(), String> {
+    let resp = Request::put(&format!("/api/v1/entries/{id}/exported"))
+        .json(&serde_json::json!({ "exported": exportada }))
+        .map_err(|e| e.to_string())?
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.ok() {
+        Ok(())
+    } else {
+        Err(format!("el servidor respondio {}", resp.status()))
+    }
 }
 
 pub async fn fetch_applications() -> Result<Vec<Application>, String> {
@@ -24,6 +49,8 @@ pub struct EntryFilters {
     pub to: String,
     pub search: String,
     pub tag: Option<String>,
+    /// Some(false) = solo las que aun no se han exportado.
+    pub exported: Option<bool>,
 }
 
 pub async fn fetch_entries(f: EntryFilters) -> Result<EntryPage, String> {
@@ -42,6 +69,9 @@ pub async fn fetch_entries(f: EntryFilters) -> Result<EntryPage, String> {
     }
     if let Some(tag) = f.tag.filter(|s| !s.is_empty()) {
         url.push_str(&format!("&tag={}", enc(&tag)));
+    }
+    if let Some(exportada) = f.exported {
+        url.push_str(&format!("&exported={exportada}"));
     }
     Request::get(&url)
         .send()
