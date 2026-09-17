@@ -94,7 +94,7 @@ async fn create_entry(
     let id = blocking(move || store.create_entry(&new, chrono::Utc::now())).await?;
     // El aviso va despues de que la entrada este commiteada, y no se espera a
     // que el exportador termine: un fallo de disco no puede tumbar el registro.
-    state.avisar_exportador.notify_waiters();
+state.avisar_exportador.notify_one();
     Ok(Json(CreatedEntry {
         id,
         url: state.config.entry_url(id),
