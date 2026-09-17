@@ -623,6 +623,71 @@ instrucción, escrita una vez, vale igual para Claude Code, Codex y Copilot.
 
 ---
 
+## Que el diario se escriba solo en el repositorio
+
+El agente llama a `log_task` y **nada más**: el propio servidor escribe, de forma
+asíncrona, un fichero markdown nuevo por entrada en `<repo>/diario-ia/` y en el directorio
+central de tareas.
+
+Esto sustituye a mantener un `DIARIO.md` a mano. La instrucción del `CLAUDE.md` pasa de
+dos pasos a uno.
+
+### Asociar cada repositorio
+
+```powershell
+.\diario.exe repo set redes-ice-netcore "C:\Users\<usuario>\codigo\aplicaciones\redes-ice-netcore"
+.\diario.exe repo list      # que aplicaciones escriben y donde
+.\diario.exe repo status    # entradas pendientes de exportar; en regimen normal, cero
+```
+
+Una aplicación sin repositorio asociado **no deja de registrarse**: escribe en el
+directorio central igual, y cuando se asocie, la siguiente pasada arrastra su histórico
+pendiente. Así no se pierde nada por no haberla dado de alta todavía.
+
+El directorio central sale de `DIARIO_TAREAS_DIR`. Es una variable y no una ruta fija
+porque la ruta habitual es de la máquina de desarrollo: un servidor desplegado en otro
+host no la tiene. Con la variable vacía, no se escribe destino central.
+
+### Los ficheros
+
+```
+20260917-125851-redes-ice-netcore-19.md
+└─fecha─┘└─hora─┘└─── aplicación ───┘└id┘
+```
+
+Fecha y hora primero para que el orden alfabético sea el cronológico; la aplicación para
+que el fichero se explique solo fuera de su carpeta; y el `id` porque varias entradas
+seguidas caen **en el mismo segundo** y sin él se pisarían.
+
+### Por qué una carpeta y no un fichero
+
+Añadir al final de un `DIARIO.md` único garantiza conflictos: dos ramas que registren
+tareas tocan las dos la última línea, y eso es conflicto en cada merge, siempre. Un
+fichero por entrada **no puede entrar en conflicto nunca**, por construcción, porque cada
+rama crea nombres distintos.
+
+De la misma regla —*solo se crean ficheros nuevos, nunca se modifica uno existente*— sale
+la otra propiedad: si el escritor falla a mitad, como mucho falta un fichero, y la
+siguiente pasada lo escribe.
+
+### Si algo falla
+
+Una ruta inexistente, sin permisos o un disco lleno **no rompen `log_task`**: la entrada
+queda pendiente y se reintenta. La alternativa —que el registro fallara— sería peor:
+perderías la tarea por un problema de disco que no tiene nada que ver con ella.
+
+Como el fallo es silencioso por diseño, se mira con `repo status`, que debería dar cero.
+
+### Los `DIARIO.md` que ya existen
+
+No se tocan ni se trocean: se quedan como histórico cerrado y lo nuevo va a la carpeta.
+La migración marca como exportadas las entradas anteriores, porque su contenido ya está
+escrito a mano en esos ficheros y volcarlas duplicaría lo que ya está. **El corte es el día
+de la migración.**
+
+---
+
+
 ## Comprobar que funciona
 
 **Que el servidor responde:**
