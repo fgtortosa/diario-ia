@@ -6,8 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use diario_shared::{
-    Application, Attachment, DayCount, Entry, EntryPage, EntryQuery, EntrySummary, NewEntry,
-};
+    Application, Attachment, DayCount, Entry, EntryPage, EntryQuery, EntrySummary, NewEntry, TagCount,};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{params, params_from_iter, types::Value, OptionalExtension};
 use sha2::{Digest, Sha256};
@@ -185,6 +184,23 @@ impl Store {
 
     /// Cuantas entradas quedan sin exportar, por aplicacion. En regimen normal
     /// deberia estar vacio: si no lo esta, algo fallo al escribir.
+    /// Etiquetas con cuantas entradas las llevan, por nombre.
+    pub fn contar_etiquetas(&self) -> AppResult<Vec<TagCount>> {
+        let conn = self.pool.get()?;
+        let mut st = conn.prepare(
+            "SELECT tag, COUNT(*) FROM entry_tag GROUP BY tag ORDER BY tag",
+        )?;
+        let filas = st
+            .query_map([], |r| {
+                Ok(TagCount {
+                    tag: r.get(0)?,
+                    count: r.get(1)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(filas)
+    }
+
     pub fn contar_pendientes_por_aplicacion(&self) -> AppResult<Vec<(String, i64)>> {
         let conn = self.pool.get()?;
         let mut st = conn.prepare(
@@ -720,6 +736,27 @@ mod tests {
         assert_eq!(slugify("Portal Alumnos"), "portal-alumnos");
         assert_eq!(slugify("  UACloud 2026!! "), "uacloud-2026");
         assert_eq!(slugify("///"), "sin-nombre");
+    }
+
+    #[test]
+    fn contar_etiquetas_agrupa_y_ordena() {
+        let store = Store::in_memory().unwrap();
+        let mut a = sample_entry("app", "Una");
+        a.tags = vec!["rust".into(), "api".into()];
+        let mut b = sample_entry("app", "Dos");
+        b.tags = vec!["rust".into()];
+        store.create_entry(&a, Utc::now()).unwrap();
+        store.create_entry(&b, Utc::now()).unwrap();
+
+        let etiquetas = store.contar_etiquetas().unwrap();
+
+        assert_eq!(
+            etiquetas,
+            vec![
+                TagCount { tag: "api".into(), count: 1 },
+                TagCount { tag: "rust".into(), count: 2 },
+            ]
+        );
     }
 
     #[test]

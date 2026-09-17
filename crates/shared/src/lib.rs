@@ -134,6 +134,13 @@ pub struct EntryPage {
     pub next_cursor: Option<i64>,
 }
 
+/// Recuento de entradas por etiqueta, para la lista lateral.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: i64,
+}
+
 /// Recuento de entradas por dia, para el heatmap/calendario.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DayCount {

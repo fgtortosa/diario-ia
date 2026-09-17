@@ -9,8 +9,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use diario_shared::{
-    Application, CreatedEntry, DayCount, Entry, EntryPage, EntryQuery, NewEntry,
-};
+    Application, CreatedEntry, DayCount, Entry, EntryPage, EntryQuery, NewEntry, TagCount,};
 
 use crate::auth::{require_viewer, require_write_key};
 use crate::error::{AppError, AppResult};
@@ -22,6 +21,7 @@ pub fn router(state: AppState) -> Router {
         .route("/applications", get(list_applications))
         .route("/entries", get(query_entries))
         .route("/entries/{id}", get(get_entry))
+        .route("/tags", get(list_tags))
         .route("/stats", get(stats))
         .route_layer(from_fn_with_state(state.clone(), require_viewer));
 
@@ -38,6 +38,12 @@ pub fn router(state: AppState) -> Router {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state)
+}
+
+async fn list_tags(State(state): State<AppState>) -> AppResult<Json<Vec<TagCount>>> {
+    let store = state.store.clone();
+    let tags = blocking(move || store.contar_etiquetas()).await?;
+    Ok(Json(tags))
 }
 
 async fn list_applications(State(state): State<AppState>) -> AppResult<Json<Vec<Application>>> {
