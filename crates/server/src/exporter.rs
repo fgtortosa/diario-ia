@@ -59,14 +59,15 @@ pub fn markdown_de(entry: &Entry) -> String {
 /// siguiente llamada arrastra lo atrasado sin que nadie intervenga.
 pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::Result<usize> {
     let mut marcadas = 0usize;
+    let mut despues_de = None;
 
     loop {
-        let pendientes = store.entradas_pendientes(200)?;
+        let pendientes = store.entradas_pendientes_despues(200, despues_de)?;
         if pendientes.is_empty() {
             break;
         }
-        let mut marcadas_lote = 0usize;
         for entrada in pendientes {
+            despues_de = Some(entrada.id);
         let mut destinos: Vec<PathBuf> = Vec::new();
 
         if let Some(repo) = store.repo_path_de_slug(&entrada.application_slug)? {
@@ -94,16 +95,9 @@ let mut todos_ok = !destinos.is_empty();
         // Se marca solo si TODOS los destinos fueron bien. Si uno falla, la
         // entrada sigue pendiente y se reintenta entera.
         if todos_ok {
-            store.marcar_exportada(entrada.id, chrono::Utc::now())?;
-            marcadas += 1;
-            marcadas_lote += 1;
-        }
-    }
-
-        // Si el lote no pudo marcar nada, repetirlo no hara progreso y dejaría
-        // al exportador en un bucle infinito. Un aviso posterior lo reintentará.
-        if marcadas_lote == 0 {
-            break;
+                store.marcar_exportada(entrada.id, chrono::Utc::now())?;
+                marcadas += 1;
+            }
         }
     }
 
@@ -122,16 +116,25 @@ fn escribir_si_no_existe(dir: &Path, nombre: &str, cuerpo: &str) -> anyhow::Resu
         return Ok(());
     }
     let temporal = dir.join(format!(".{nombre}.{}.tmp", uuid::Uuid::new_v4()));
-    let mut fichero = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temporal)?;
-    fichero.write_all(cuerpo.as_bytes())?;
-    fichero.sync_all()?;
-    drop(fichero);
-    match std::fs::rename(&temporal, &destino) {
-        Ok(()) => Ok(()),
-        Err(_) if destino.exists() => {
+    let resultado = (|| -> std::io::Result<()> {
+        let mut fichero = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporal)?;
+        fichero.write_all(cuerpo.as_bytes())?;
+        fichero.sync_all()?;
+        drop(fichero);
+        // hard_link publica sin reemplazar: si otro escritor ya creó el
+        // destino, falla con AlreadyExists en vez de modificarlo.
+        std::fs::hard_link(&temporal, &destino)?;
+        Ok(())
+    })();
+    match resultado {
+        Ok(()) => {
+            let _ = std::fs::remove_file(&temporal);
+            Ok(())
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
             let _ = std::fs::remove_file(&temporal);
             Ok(())
         }

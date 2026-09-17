@@ -23,6 +23,23 @@ Se corrigen las observaciones aplicables de Copilot en el exportador y en el fil
 
 ---
 
+## 2026-09-17 21:37 — Completar las correcciones de la revisión del PR #5
+
+Se incorporan las tres observaciones adicionales de Copilot sobre el parche de fiabilidad.
+
+**Acciones realizadas**
+
+- La publicación usa un hard link desde el temporal, que falla si el destino ya existe,
+  y elimina siempre el temporal tras publicar o tras cualquier error de escritura.
+- La exportación recorre la cola por id para que las entradas fallidas no bloqueen las
+  posteriores; la migración detecta también la ausencia de su índice finalizador.
+
+**Verificación**
+
+- `cargo test -p diario-server --quiet`: 40 pruebas correctas.
+
+---
+
 ## 2026-09-17 07:55 — Configuración del MCP en Claude Code y Codex, y documento de instalación por cliente
 
 Se pone el diario a funcionar de verdad en los dos agentes que se usan a diario, y se
