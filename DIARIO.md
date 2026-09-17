@@ -189,3 +189,37 @@ el central sin `repo_path`, no escribe central si no hay `DIARIO_TAREAS_DIR`, un
 inválida deja la entrada pendiente sin romper nada, el reintento no pisa lo ya escrito,
 procesa todas las pendientes, dos entradas del mismo segundo no colisionan, y crear una
 entrada por la API despierta al exportador.
+
+---
+
+## 2026-09-17 20:25 — Filtro por etiqueta en la web
+
+La API soportaba `tag` desde siempre (`EntryQuery.tag`), pero el cliente no lo usaba: las
+etiquetas se pintaban como texto muerto y no había forma de filtrar por ellas desde la web.
+
+**Acciones realizadas**
+
+- `EntryFilters` gana `tag: Option<String>` y lo envía como `&tag=`.
+- Las etiquetas de cada tarjeta pasan de `<span>` a `<button>` clicable.
+- Un chip en la cabecera muestra la etiqueta activa con una × para quitarla.
+- Estilos para la etiqueta clicable, con `:hover` y `:focus-visible`.
+
+**Decisiones**
+
+- **Etiquetas clicables en vez de un control nuevo en la cabecera.** Es más descubrible y no
+  añade ruido: ya estaban ahí, solo eran inertes.
+- **`ev.stop_propagation()` en el clic.** La tarjeta entera tiene un `on:click` que navega
+  al detalle; sin eso, pulsar una etiqueta filtraría y navegaría a la vez.
+- **Se usan las variables CSS que existen** (`--text`, `--accent`, `--accent-soft`). En la
+  primera versión inventé una `--fg` que no estaba declarada.
+
+**Verificación**
+
+- La SPA compila con `trunk build --release` (Leptos es tipado: eso valida el cableado de
+  la señal al filtro y a la URL).
+- El filtro del servidor responde: `?tag=exportacion` devuelve 1, `?tag=gitignore` devuelve
+  1, `?tag=no-existe` devuelve 0.
+- El WASM que sirve el binario contiene las cadenas nuevas, así que lo desplegado es la
+  compilación nueva y no una embebida vieja.
+- **Sin comprobación visual**: la extensión de Chrome no estaba conectada. Queda pendiente
+  mirarlo en el navegador.

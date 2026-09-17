@@ -30,6 +30,7 @@ pub fn App() -> impl IntoView {
     let from = RwSignal::new(String::new());
     let to = RwSignal::new(String::new());
     let search = RwSignal::new(String::new());
+    let selected_tag = RwSignal::new(Option::<String>::None);
     let entries = RwSignal::new(Vec::<EntrySummary>::new());
     let loading = RwSignal::new(false);
     let view = RwSignal::new(parse_route(&current_path()));
@@ -49,6 +50,7 @@ pub fn App() -> impl IntoView {
             from: from.get(),
             to: to.get(),
             search: search.get(),
+            tag: selected_tag.get(),
         };
         loading.set(true);
         spawn_local(async move {
@@ -62,11 +64,11 @@ pub fn App() -> impl IntoView {
 
     view! {
         <div class="app">
-            <Header search=search />
+            <Header search=search selected_tag=selected_tag />
             <Sidebar apps=apps selected_app=selected_app from=from to=to />
             <main class="main">
                 {move || match view.get() {
-                    View::List => view! { <Timeline entries=entries loading=loading view=view /> }.into_any(),
+                    View::List => view! { <Timeline entries=entries loading=loading view=view selected_tag=selected_tag /> }.into_any(),
                     View::Detail(id) => view! { <EntryDetail id=id view=view /> }.into_any(),
                 }}
             </main>
@@ -75,7 +77,7 @@ pub fn App() -> impl IntoView {
 }
 
 #[component]
-fn Header(search: RwSignal<String>) -> impl IntoView {
+fn Header(search: RwSignal<String>, selected_tag: RwSignal<Option<String>>) -> impl IntoView {
     view! {
         <header class="header">
             <h1><span class="logo">"📓"</span> "Diario-IA"</h1>
@@ -87,6 +89,13 @@ fn Header(search: RwSignal<String>) -> impl IntoView {
                 prop:value=move || search.get()
                 on:input=move |ev| search.set(event_target_value(&ev))
             />
+            {move || selected_tag.get().map(|etiqueta| view! {
+                <button
+                    class="tag tag-activo"
+                    title="Quitar el filtro de etiqueta"
+                    on:click=move |_| selected_tag.set(None)
+                >{format!("#{etiqueta} ×")}</button>
+            })}
         </header>
     }
 }
@@ -162,6 +171,7 @@ fn Timeline(
     entries: RwSignal<Vec<EntrySummary>>,
     loading: RwSignal<bool>,
     view: RwSignal<View>,
+    selected_tag: RwSignal<Option<String>>,
 ) -> impl IntoView {
     move || {
         if loading.get() && entries.get().is_empty() {
@@ -180,7 +190,7 @@ fn Timeline(
                 view! {
                     <div class="day-group">
                         <p class="day-heading">{day}</p>
-                        {list.into_iter().map(|e| entry_card(e, view)).collect_view()}
+                        {list.into_iter().map(|e| entry_card(e, view, selected_tag)).collect_view()}
                     </div>
                 }
             })
@@ -189,7 +199,11 @@ fn Timeline(
     }
 }
 
-fn entry_card(e: EntrySummary, view: RwSignal<View>) -> impl IntoView {
+fn entry_card(
+    e: EntrySummary,
+    view: RwSignal<View>,
+    selected_tag: RwSignal<Option<String>>,
+) -> impl IntoView {
     let id = e.id;
     let time = e.created_at.format("%H:%M").to_string();
     let model_suffix = e.model.clone().map(|m| format!(" · {m}")).unwrap_or_default();
@@ -209,7 +223,21 @@ fn entry_card(e: EntrySummary, view: RwSignal<View>) -> impl IntoView {
             </div>
             <div class="row" style="margin-top:6px">
                 <span class="meta">{meta}</span>
-                {tags.into_iter().map(|t| view! { <span class="tag">{t}</span> }).collect_view()}
+                {tags.into_iter().map(|etiqueta| {
+                    let valor = etiqueta.clone();
+                    view! {
+                        <button
+                            class="tag"
+                            title="Filtrar por esta etiqueta"
+                            on:click=move |ev| {
+                                // Sin stop_propagation el clic llegaria tambien a
+                                // la tarjeta y navegaria al detalle en vez de filtrar.
+                                ev.stop_propagation();
+                                selected_tag.set(Some(valor.clone()));
+                            }
+                        >{etiqueta}</button>
+                    }
+                }).collect_view()}
             </div>
             <p class="snippet">{e.snippet.clone()}</p>
         </div>
