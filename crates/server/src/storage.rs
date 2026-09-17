@@ -117,6 +117,54 @@ impl Store {
     // -------------------------------------------------------------- entries
 
     /// Crea una entrada (y la aplicacion si no existe). Devuelve el id.
+    /// Entradas sin exportar, de la mas antigua a la mas nueva.
+    ///
+    /// Se resuelven en dos pasos —primero los ids, luego get_entry— porque
+    /// get_entry pide su propia conexion del pool y mantener abierto el
+    /// statement mientras tanto agotaria el pool con una sola conexion.
+    pub fn entradas_pendientes(&self, limite: usize) -> AppResult<Vec<Entry>> {
+        let ids: Vec<i64> = {
+            let conn = self.pool.get()?;
+            let mut st = conn.prepare(
+                "SELECT id FROM entry WHERE exported_at IS NULL ORDER BY id ASC LIMIT ?1",
+            )?;
+            let filas = st
+                .query_map(params![limite as i64], |r| r.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            filas
+        };
+
+        let mut salida = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(e) = self.get_entry(id)? {
+                salida.push(e);
+            }
+        }
+        Ok(salida)
+    }
+
+    pub fn marcar_exportada(&self, id: i64, cuando: DateTime<Utc>) -> AppResult<()> {
+        let conn = self.pool.get()?;
+        conn.execute(
+            "UPDATE entry SET exported_at = ?1 WHERE id = ?2",
+            params![cuando.to_rfc3339(), id],
+        )?;
+        Ok(())
+    }
+
+    /// Cuantas entradas quedan sin exportar, por aplicacion. En regimen normal
+    /// deberia estar vacio: si no lo esta, algo fallo al escribir.
+    pub fn contar_pendientes_por_aplicacion(&self) -> AppResult<Vec<(String, i64)>> {
+        let conn = self.pool.get()?;
+        let mut st = conn.prepare(
+            "SELECT a.name, COUNT(*) FROM entry e              JOIN application a ON a.id = e.application_id              WHERE e.exported_at IS NULL GROUP BY a.name ORDER BY a.name",
+        )?;
+        let filas = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(filas)
+    }
+
     /// Asocia una aplicacion a la carpeta de su repositorio. None la desasocia.
     /// Devuelve false si la aplicacion no existe todavia en el diario.
     pub fn set_repo_path(&self, aplicacion: &str, ruta: Option<&str>) -> AppResult<bool> {
@@ -630,6 +678,50 @@ mod tests {
         assert_eq!(slugify("Portal Alumnos"), "portal-alumnos");
         assert_eq!(slugify("  UACloud 2026!! "), "uacloud-2026");
         assert_eq!(slugify("///"), "sin-nombre");
+    }
+
+    #[test]
+    fn una_entrada_nueva_nace_pendiente() {
+        let store = Store::in_memory().unwrap();
+        let id = store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+
+        let pendientes = store.entradas_pendientes(10).unwrap();
+        assert_eq!(pendientes.len(), 1);
+        assert_eq!(pendientes[0].id, id);
+    }
+
+    #[test]
+    fn marcar_exportada_la_saca_de_la_cola() {
+        let store = Store::in_memory().unwrap();
+        let id = store.create_entry(&sample_entry("mi-app", "Titulo"), Utc::now()).unwrap();
+
+        store.marcar_exportada(id, Utc::now()).unwrap();
+
+        assert!(store.entradas_pendientes(10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn las_pendientes_salen_de_la_mas_antigua_a_la_mas_nueva() {
+        let store = Store::in_memory().unwrap();
+        let primera = store.create_entry(&sample_entry("mi-app", "Primera"), Utc::now()).unwrap();
+        let segunda = store.create_entry(&sample_entry("mi-app", "Segunda"), Utc::now()).unwrap();
+
+        let pendientes = store.entradas_pendientes(10).unwrap();
+        assert_eq!(pendientes[0].id, primera);
+        assert_eq!(pendientes[1].id, segunda);
+    }
+
+    #[test]
+    fn contar_pendientes_agrupa_por_aplicacion() {
+        let store = Store::in_memory().unwrap();
+        store.create_entry(&sample_entry("app-a", "Una"), Utc::now()).unwrap();
+        store.create_entry(&sample_entry("app-a", "Dos"), Utc::now()).unwrap();
+        store.create_entry(&sample_entry("app-b", "Tres"), Utc::now()).unwrap();
+
+        assert_eq!(
+            store.contar_pendientes_por_aplicacion().unwrap(),
+            vec![("app-a".to_string(), 2), ("app-b".to_string(), 1)]
+        );
     }
 
     #[test]
