@@ -3,10 +3,10 @@
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
-use diario_shared::{Application, Entry, EntrySummary, TagCount};
+use diario_shared::{Application, Entry, EntrySummary, TagCount, markdown_de};
 
 use crate::api::{self, EntryFilters};
-use crate::ffi::{current_path, on_popstate, push_path, render_diagrams};
+use crate::ffi::{current_path, on_popstate, push_path, render_diagrams, descargar_fichero, imprimir};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
@@ -325,13 +325,13 @@ fn EntryDetail(id: i64, view: RwSignal<View>) -> impl IntoView {
             </button>
             {move || match entry.get() {
                 None => view! { <p class="loading">"Cargando…"</p> }.into_any(),
-                Some(e) => detail_body(e).into_any(),
+                Some(e) => detail_body(e, entry).into_any(),
             }}
         </div>
     }
 }
 
-fn detail_body(e: Entry) -> impl IntoView {
+fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
     let date = e.created_at.format("%d/%m/%Y %H:%M").to_string();
     let model = e.model.clone().unwrap_or_else(|| "—".to_string());
     let meta = format!("{} · {}", e.agent_name, model);
@@ -339,8 +339,56 @@ fn detail_body(e: Entry) -> impl IntoView {
     let summary = e.task_summary.clone().filter(|s| !s.is_empty());
     let attachments = e.attachments.clone();
 
+    // Mismo esquema de nombre que los ficheros que escribe el exportador, para
+    // que descargar a mano y exportar automaticamente produzcan lo mismo.
+    let nombre_md = format!(
+        "{}-{}-{}.md",
+        e.created_at.with_timezone(&chrono::Local).format("%Y%m%d-%H%M%S"),
+        e.application_slug,
+        e.id
+    );
+    let md = markdown_de(&e);
+    let id = e.id;
+    let exportada = e.exported_at;
+
     view! {
         <h1>{e.title.clone()}</h1>
+        <div class="acciones">
+            <button class="btn" title="Descargar esta entrada en markdown"
+                on:click=move |_| descargar_fichero(&nombre_md, &md)>"Descargar .md"</button>
+            <button class="btn" title="Imprimir o guardar como PDF"
+                on:click=move |_| imprimir()>"PDF"</button>
+            <span class="estado-export">
+                {match exportada {
+                    Some(cuando) => format!(
+                        "Exportada el {}",
+                        cuando.with_timezone(&chrono::Local).format("%d/%m/%Y %H:%M")
+                    ),
+                    None => "Sin exportar".to_string(),
+                }}
+            </span>
+            <button
+                class="btn"
+                title=if exportada.is_some() {
+                    "Marcarla como no exportada: el exportador la reescribira en la siguiente pasada, respetando el fichero si ya existe"
+                } else {
+                    "Marcarla como exportada sin escribir el fichero: quedara sin exportar de verdad"
+                }
+                on:click=move |_| {
+                    let nuevo = exportada.is_none();
+                    spawn_local(async move {
+                        if api::set_exported(id, nuevo).await.is_ok() {
+                            // Se recarga la entrada para que el indicador no mienta.
+                            if let Ok(e) = api::fetch_entry(id).await {
+                                entry.set(Some(e));
+                            }
+                        }
+                    });
+                }
+            >
+                {if exportada.is_some() { "Marcar sin exportar" } else { "Marcar exportada" }}
+            </button>
+        </div>
         <div class="meta-row">
             <span class="badge">{e.application_name.clone()}</span>
             <span class="meta">{meta}</span>

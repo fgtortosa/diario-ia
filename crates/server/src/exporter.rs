@@ -10,7 +10,7 @@
 
 use crate::storage::Store;
 use chrono::Local;
-use diario_shared::Entry;
+use diario_shared::{markdown_de, Entry};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -28,30 +28,6 @@ pub fn nombre_fichero(entry: &Entry) -> String {
     )
 }
 
-/// El markdown que se escribe en el repositorio. El titulo va como H1 y el
-/// prompt literal, sin parafrasear, que es lo que le da valor al registro.
-pub fn markdown_de(entry: &Entry) -> String {
-    let mut s = String::new();
-    s.push_str(&format!("# {}\n\n", entry.title));
-    s.push_str(&format!("- Aplicacion: {}\n", entry.application_name));
-    s.push_str(&format!(
-        "- Agente: {} ({})\n",
-        entry.agent_name,
-        entry.model.as_deref().unwrap_or("-")
-    ));
-    s.push_str(&format!("- Fecha: {}\n", entry.created_at.to_rfc3339()));
-    s.push_str(&format!("- Entrada: {}\n", entry.id));
-    if !entry.tags.is_empty() {
-        s.push_str(&format!("- Etiquetas: {}\n", entry.tags.join(", ")));
-    }
-    s.push('\n');
-    s.push_str(&format!("## Prompt\n\n{}\n\n", entry.prompt));
-    if let Some(resumen) = &entry.task_summary {
-        s.push_str(&format!("## Resumen\n\n{}\n\n", resumen));
-    }
-    s.push_str(&format!("## Respuesta\n\n{}\n", entry.response_markdown));
-    s
-}
 
 /// Escribe todas las entradas pendientes y devuelve cuantas se marcaron.
 ///

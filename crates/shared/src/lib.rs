@@ -161,3 +161,32 @@ pub struct CreatedEntry {
     pub id: i64,
     pub url: String,
 }
+
+/// El markdown de una entrada.
+///
+/// Vive aqui y no en el servidor porque lo usan los dos lados: el exportador
+/// para escribir el fichero del repositorio, y la web para el boton de
+/// descargar. Con una sola definicion, lo que te bajas y lo que se exporta son
+/// identicos por construccion y no por coincidencia.
+pub fn markdown_de(entry: &Entry) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("# {}\n\n", entry.title));
+    s.push_str(&format!("- Aplicacion: {}\n", entry.application_name));
+    s.push_str(&format!(
+        "- Agente: {} ({})\n",
+        entry.agent_name,
+        entry.model.as_deref().unwrap_or("-")
+    ));
+    s.push_str(&format!("- Fecha: {}\n", entry.created_at.to_rfc3339()));
+    s.push_str(&format!("- Entrada: {}\n", entry.id));
+    if !entry.tags.is_empty() {
+        s.push_str(&format!("- Etiquetas: {}\n", entry.tags.join(", ")));
+    }
+    s.push('\n');
+    s.push_str(&format!("## Prompt\n\n{}\n\n", entry.prompt));
+    if let Some(resumen) = &entry.task_summary {
+        s.push_str(&format!("## Resumen\n\n{}\n\n", resumen));
+    }
+    s.push_str(&format!("## Respuesta\n\n{}\n", entry.response_markdown));
+    s
+}
