@@ -223,6 +223,7 @@ mod tests {
                 db_path: ":memory:".into(),
                 public_url: base.clone(),
                 viewer_token: None,
+            tareas_dir: None,
             }),
         };
         let app = crate::api::router(state);

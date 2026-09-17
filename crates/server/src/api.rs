@@ -118,6 +118,7 @@ mod tests {
                 db_path: ":memory:".into(),
                 public_url: "http://test".into(),
                 viewer_token: None,
+            tareas_dir: None,
             }),
         }
     }

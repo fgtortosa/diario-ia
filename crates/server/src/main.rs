@@ -58,6 +58,9 @@ struct ServeArgs {
     /// Token de lectura opcional (protege GET/SPA). Vacio = lectura libre.
     #[arg(long, env = "DIARIO_VIEWER_TOKEN")]
     viewer_token: Option<String>,
+    /// Directorio central donde se acumulan las tareas de todas las aplicaciones.
+    #[arg(long, env = "DIARIO_TAREAS_DIR")]
+    tareas_dir: Option<String>,
 }
 
 #[derive(Parser)]
@@ -144,6 +147,7 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
         db_path: args.db.clone(),
         public_url: args.public_url,
         viewer_token: args.viewer_token.filter(|t| !t.is_empty()),
+        tareas_dir: args.tareas_dir,
     };
     let store = Store::open(&config.db_path)?;
     let state = AppState {
