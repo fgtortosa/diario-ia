@@ -141,7 +141,7 @@ desincronizarse del disco.
 
 **Lo que había que aclarar**
 
-Conviven tres nombres para la misma cosa, y confundirlos era el riesgo real:
+Conviven dos nombres para la misma cosa, y confundirlos era el riesgo real:
 
 - `uaRedesIce` — el nombre **real** de la aplicación: `.csproj`, `IdApp`, `Web.config`,
   destino de despliegue. No se toca nunca.
@@ -168,3 +168,21 @@ La regla se fijó el mismo día en que las carpetas de `aplicaciones/` se aplana
 renombraron (fuera el prefijo `ua`, mayúsculas a guiones, sufijo `-netcore`/`-mvc`),
 aprovechando que el diario estaba prácticamente vacío. Era el momento más barato: después,
 cada renombrado cuesta un corte en la historia.
+
+---
+
+## 2026-09-17 21:25 — Correcciones de la guía de nombres de `application`
+
+Se incorporan las observaciones válidas de la revisión del PR #3.
+
+**Acciones realizadas**
+
+- El ejemplo REST usa ahora `redes-ice-netcore`, el nombre de carpeta, en vez del nombre
+  real `uaRedesIce` que la propia regla prohíbe usar como `application`.
+- La entrada anterior del diario habla de dos nombres, los dos que enumera, y deja de
+  afirmar incorrectamente que son tres.
+
+**Verificación**
+
+- Comprobado que la rama no contiene errores de espacios y que la búsqueda de la guía ya
+  no encuentra el ejemplo REST contradictorio.

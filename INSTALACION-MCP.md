@@ -563,7 +563,7 @@ curl -X POST http://127.0.0.1:8787/api/v1/entries \
   -H 'Authorization: Bearer dk_tu_token' \
   -H 'content-type: application/json' \
   -d '{
-    "application": "uaRedesIce",
+    "application": "redes-ice-netcore",
     "agent": "script-ci",
     "title": "Publicación 2.4.1 en preproducción",
     "prompt": "…",
