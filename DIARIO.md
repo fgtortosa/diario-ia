@@ -221,5 +221,8 @@ etiquetas se pintaban como texto muerto y no había forma de filtrar por ellas d
   1, `?tag=no-existe` devuelve 0.
 - El WASM que sirve el binario contiene las cadenas nuevas, así que lo desplegado es la
   compilación nueva y no una embebida vieja.
-- **Sin comprobación visual**: la extensión de Chrome no estaba conectada. Queda pendiente
-  mirarlo en el navegador.
+- **Comprobado en el navegador con Playwright** (la extensión de Chrome no conectaba):
+  pulsar la etiqueta `gitignore` deja el listado en 1 entrada de 23 y aparece el chip
+  `#gitignore ×` en la cabecera; la × lo quita y vuelven las 23. Lo importante es que la
+  URL sigue siendo `/` tras pulsar la etiqueta: el `stop_propagation` funciona y no navega
+  al detalle. Sin errores de consola.
