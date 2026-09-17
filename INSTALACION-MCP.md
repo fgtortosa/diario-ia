@@ -38,7 +38,7 @@ que pongas en la configuración sea la ruta real y **absoluta**.
 ### 2. El servidor central
 
 ```powershell
-.\diario.exe serve              # escucha en 0.0.0.0:8787
+.\target\release\diario.exe serve              # escucha en 0.0.0.0:8787
 ```
 
 Tiene que estar arrancado para que `log_task` funcione. Si solo lo usas tú, vale con
