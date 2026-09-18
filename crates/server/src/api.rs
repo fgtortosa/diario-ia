@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/applications", get(list_applications))
         .route("/entries", get(query_entries))
         .route("/entries/{id}", get(get_entry))
+        .route("/hilo", get(hilo))
         .route("/tags", get(list_tags))
         .route("/stats", get(stats));
 
@@ -191,6 +192,21 @@ async fn query_entries(
         &format!("n={}", page.entries.len()),
     );
     Ok(Json(page))
+}
+
+async fn hilo(
+    State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
+    Query(q): Query<EntryQuery>,
+) -> AppResult<Json<Vec<Entry>>> {
+    let store = state.store.clone();
+    let entradas = blocking(move || store.hilo(&q)).await?;
+    state.config.traza(
+        origen(&cabeceras),
+        "consultar_hilo",
+        &format!("n={}", entradas.len()),
+    );
+    Ok(Json(entradas))
 }
 
 async fn get_entry(
@@ -530,5 +546,30 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(ct.contains("text/html"));
+    }
+
+    #[tokio::test]
+    async fn el_hilo_devuelve_las_entradas_enteras_sin_clave() {
+        // El listado solo trae un fragmento; el hilo sirve para pegarselo a un
+        // agente, asi que tiene que traer el prompt y la respuesta completos.
+        let app = router(test_state());
+        crear_entrada_en_bootstrap(&app).await;
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/hilo?application=mi-app")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let entradas: Vec<Entry> = json_body(resp).await;
+        assert_eq!(entradas.len(), 1);
+        assert_eq!(entradas[0].prompt, "haz algo");
+        assert!(entradas[0].response_markdown.contains("mermaid"));
     }
 }

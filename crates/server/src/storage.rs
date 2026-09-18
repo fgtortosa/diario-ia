@@ -200,6 +200,40 @@ impl Store {
         Ok(filas > 0)
     }
 
+    /// Entradas completas que casan con el filtro, de la mas antigua a la mas
+    /// nueva.
+    ///
+    /// Ascendente a proposito: el hilo se lee hacia delante, al reves que el
+    /// listado. Y completas porque el listado solo trae un fragmento, y el hilo
+    /// existe justo para poder copiar el contenido entero.
+    pub fn hilo(&self, q: &EntryQuery) -> AppResult<Vec<Entry>> {
+        let ids: Vec<i64> = {
+            let conn = self.pool.get()?;
+            let (wheres, args) = filtros_de(q);
+            let mut sql = String::from(
+                "SELECT e.id FROM entry e JOIN application a ON a.id = e.application_id",
+            );
+            if !wheres.is_empty() {
+                sql.push_str(" WHERE ");
+                sql.push_str(&wheres.join(" AND "));
+            }
+            sql.push_str(" ORDER BY e.id ASC");
+            let mut st = conn.prepare(&sql)?;
+            let filas = st
+                .query_map(params_from_iter(args.iter()), |r| r.get(0))?
+                .collect::<Result<Vec<_>, _>>()?;
+            filas
+        };
+
+        let mut salida = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(e) = self.get_entry(id)? {
+                salida.push(e);
+            }
+        }
+        Ok(salida)
+    }
+
     /// Etiquetas con cuantas entradas las llevan, por nombre.
     pub fn contar_etiquetas(&self) -> AppResult<Vec<TagCount>> {
         let conn = self.pool.get()?;
@@ -364,46 +398,7 @@ impl Store {
                     (SELECT group_concat(t.tag, char(31)) FROM entry_tag t WHERE t.entry_id = e.id)
              FROM entry e JOIN application a ON a.id = e.application_id",
         );
-        let mut wheres: Vec<String> = Vec::new();
-        let mut args: Vec<Value> = Vec::new();
-
-        if let Some(app) = non_empty(&q.application) {
-            wheres.push("a.slug = ?".into());
-            args.push(Value::Text(slugify(app)));
-        }
-        if let Some(from) = non_empty(&q.from) {
-            wheres.push("substr(e.created_at,1,10) >= ?".into());
-            args.push(Value::Text(from.to_string()));
-        }
-        if let Some(to) = non_empty(&q.to) {
-            wheres.push("substr(e.created_at,1,10) <= ?".into());
-            args.push(Value::Text(to.to_string()));
-        }
-        if let Some(exportada) = q.exported {
-            wheres.push(
-                if exportada {
-                    "e.exported_at IS NOT NULL"
-                } else {
-                    "e.exported_at IS NULL"
-                }
-                .into(),
-            );
-        }
-        if let Some(tag) = non_empty(&q.tag) {
-            wheres.push(
-                "EXISTS (SELECT 1 FROM entry_tag t WHERE t.entry_id = e.id AND t.tag = ?)".into(),
-            );
-            args.push(Value::Text(tag.to_string()));
-        }
-        if let Some(text) = non_empty(&q.q) {
-            wheres.push(
-                "(e.title LIKE ? OR e.prompt LIKE ? OR e.task_summary LIKE ? OR e.response_markdown LIKE ?)".into(),
-            );
-            let pat = format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"));
-            for _ in 0..4 {
-                args.push(Value::Text(pat.clone()));
-            }
-        }
+        let (mut wheres, mut args) = filtros_de(q);
         if let Some(cursor) = q.cursor {
             wheres.push("e.id < ?".into());
             args.push(Value::Integer(cursor));
@@ -669,6 +664,55 @@ fn non_empty(opt: &Option<String>) -> Option<&str> {
     opt.as_deref().map(str::trim).filter(|s| !s.is_empty())
 }
 
+/// Condiciones WHERE y argumentos comunes al listado y al hilo.
+///
+/// Vive aparte para que las dos vistas filtren igual: duplicar esto seria
+/// garantizar que un dia una filtre por algo que la otra no.
+/// El cursor de paginacion no entra aqui: solo lo usa el listado.
+fn filtros_de(q: &EntryQuery) -> (Vec<String>, Vec<Value>) {
+    let mut wheres: Vec<String> = Vec::new();
+    let mut args: Vec<Value> = Vec::new();
+
+    if let Some(app) = non_empty(&q.application) {
+        wheres.push("a.slug = ?".into());
+        args.push(Value::Text(slugify(app)));
+    }
+    if let Some(from) = non_empty(&q.from) {
+        wheres.push("substr(e.created_at,1,10) >= ?".into());
+        args.push(Value::Text(from.to_string()));
+    }
+    if let Some(to) = non_empty(&q.to) {
+        wheres.push("substr(e.created_at,1,10) <= ?".into());
+        args.push(Value::Text(to.to_string()));
+    }
+    if let Some(exportada) = q.exported {
+        wheres.push(
+            if exportada {
+                "e.exported_at IS NOT NULL"
+            } else {
+                "e.exported_at IS NULL"
+            }
+            .into(),
+        );
+    }
+    if let Some(tag) = non_empty(&q.tag) {
+        wheres.push(
+            "EXISTS (SELECT 1 FROM entry_tag t WHERE t.entry_id = e.id AND t.tag = ?)".into(),
+        );
+        args.push(Value::Text(tag.to_string()));
+    }
+    if let Some(text) = non_empty(&q.q) {
+        wheres.push(
+            "(e.title LIKE ? OR e.prompt LIKE ? OR e.task_summary LIKE ? OR e.response_markdown LIKE ?)".into(),
+        );
+        let pat = format!("%{}%", text.replace('%', "\\%").replace('_', "\\_"));
+        for _ in 0..4 {
+            args.push(Value::Text(pat.clone()));
+        }
+    }
+    (wheres, args)
+}
+
 fn parse_dt(s: &str) -> Option<DateTime<Utc>> {
     // Casi todo se guarda en RFC3339, pero la migracion 0002 marco las entradas
     // antiguas con datetime('now') de SQLite, que es 'AAAA-MM-DD HH:MM:SS' en
@@ -866,6 +910,48 @@ mod tests {
 
         assert_eq!(entry.export_filename, diario_shared::nombre_fichero(&entry));
         assert!(entry.export_filename.ends_with(&format!("-mi-app-{id}.md")));
+    }
+
+    #[test]
+    fn el_hilo_devuelve_entradas_completas_en_orden_ascendente() {
+        let store = Store::in_memory().unwrap();
+        let primera = store
+            .create_entry(&sample_entry("app", "Primera"), Utc::now())
+            .unwrap();
+        let segunda = store
+            .create_entry(&sample_entry("app", "Segunda"), Utc::now())
+            .unwrap();
+
+        let hilo = store.hilo(&EntryQuery::default()).unwrap();
+
+        // Ascendente: se lee hacia delante, al reves que el listado.
+        assert_eq!(hilo.iter().map(|e| e.id).collect::<Vec<_>>(), vec![primera, segunda]);
+        // Y completas: el listado solo trae un fragmento.
+        assert!(!hilo[0].prompt.is_empty());
+        assert!(!hilo[0].response_markdown.is_empty());
+    }
+
+    #[test]
+    fn el_hilo_respeta_los_mismos_filtros_que_el_listado() {
+        let store = Store::in_memory().unwrap();
+        let mut con_tag = sample_entry("app-a", "Con etiqueta");
+        con_tag.tags = vec!["build".into()];
+        let mut sin_tag = sample_entry("app-a", "Sin etiqueta");
+        sin_tag.tags = vec![];
+        store.create_entry(&con_tag, Utc::now()).unwrap();
+        store.create_entry(&sin_tag, Utc::now()).unwrap();
+        store.create_entry(&sample_entry("app-b", "Otra app"), Utc::now()).unwrap();
+
+        let por_app = store
+            .hilo(&EntryQuery { application: Some("app-a".into()), ..Default::default() })
+            .unwrap();
+        let por_tag = store
+            .hilo(&EntryQuery { tag: Some("build".into()), ..Default::default() })
+            .unwrap();
+
+        assert_eq!(por_app.len(), 2);
+        assert_eq!(por_tag.len(), 1);
+        assert_eq!(por_tag[0].title, "Con etiqueta");
     }
 
     #[test]
