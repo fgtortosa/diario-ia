@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/applications", get(list_applications))
         .route("/entries", get(query_entries))
         .route("/entries/{id}", get(get_entry))
+        .route("/hilo", get(hilo))
         .route("/tags", get(list_tags))
         .route("/stats", get(stats));
 
@@ -39,10 +40,17 @@ pub fn router(state: AppState) -> Router {
     // El boton de la web necesita que este abierto, asi que hay una opcion
     // explicita para instancias locales. Apagada por defecto: que la interfaz
     // sea comoda no puede decidir donde esta el limite de permisos.
+    //
+    // Lo mismo vale para forzar una pasada de exportacion: escribe ficheros en
+    // repositorios del disco, asi que va por el mismo camino.
     if state.config.marcado_abierto {
-        read = read.route("/entries/{id}/exported", put(set_exported));
+        read = read
+            .route("/entries/{id}/exported", put(set_exported))
+            .route("/exportar", post(exportar_ahora));
     } else {
-        write = write.route("/entries/{id}/exported", put(set_exported));
+        write = write
+            .route("/entries/{id}/exported", put(set_exported))
+            .route("/exportar", post(exportar_ahora));
     }
 
     let read = read.route_layer(from_fn_with_state(state.clone(), require_viewer));
@@ -92,6 +100,43 @@ async fn set_exported(
     Ok(Json(
         serde_json::json!({ "id": id, "exported": cuerpo.exported }),
     ))
+}
+
+/// Fuerza una pasada del exportador y responde con el resultado.
+///
+/// Existe porque el servidor suele correr como tarea de Windows, oculto: su
+/// consola no la ve nadie, asi que no hay forma de saber si queda algo sin
+/// volcar ni de provocar el volcado sin reiniciar.
+async fn exportar_ahora(
+    State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
+) -> AppResult<Json<serde_json::Value>> {
+    let store = state.store.clone();
+    let dir = state.config.tareas_dir_efectivo().map(|s| s.to_string());
+    let escritas = blocking(move || {
+        crate::exporter::exportar_pendientes(&store, dir.as_deref())
+            .map_err(crate::error::AppError::Other)
+    })
+    .await?;
+
+    let store = state.store.clone();
+    let pendientes = blocking(move || store.contar_pendientes_por_aplicacion()).await?;
+    let quedan: i64 = pendientes.iter().map(|(_, n)| n).sum();
+
+    state.config.traza(
+        origen(&cabeceras),
+        "exportar_ahora",
+        &format!("escritas={escritas} quedan={quedan}"),
+    );
+
+    Ok(Json(serde_json::json!({
+        "escritas": escritas,
+        "pendientes": quedan,
+        "por_aplicacion": pendientes
+            .into_iter()
+            .map(|(a, n)| serde_json::json!({ "aplicacion": a, "pendientes": n }))
+            .collect::<Vec<_>>(),
+    })))
 }
 
 /// De donde viene la peticion, para el modo log. El puente MCP se identifica
@@ -147,6 +192,21 @@ async fn query_entries(
         &format!("n={}", page.entries.len()),
     );
     Ok(Json(page))
+}
+
+async fn hilo(
+    State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
+    Query(q): Query<EntryQuery>,
+) -> AppResult<Json<Vec<Entry>>> {
+    let store = state.store.clone();
+    let entradas = blocking(move || store.hilo(&q)).await?;
+    state.config.traza(
+        origen(&cabeceras),
+        "consultar_hilo",
+        &format!("n={}", entradas.len()),
+    );
+    Ok(Json(entradas))
 }
 
 async fn get_entry(
@@ -486,5 +546,30 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(ct.contains("text/html"));
+    }
+
+    #[tokio::test]
+    async fn el_hilo_devuelve_las_entradas_enteras_sin_clave() {
+        // El listado solo trae un fragmento; el hilo sirve para pegarselo a un
+        // agente, asi que tiene que traer el prompt y la respuesta completos.
+        let app = router(test_state());
+        crear_entrada_en_bootstrap(&app).await;
+
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/hilo?application=mi-app")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let entradas: Vec<Entry> = json_body(resp).await;
+        assert_eq!(entradas.len(), 1);
+        assert_eq!(entradas[0].prompt, "haz algo");
+        assert!(entradas[0].response_markdown.contains("mermaid"));
     }
 }

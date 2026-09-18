@@ -3,17 +3,22 @@
 use leptos::prelude::*;
 use wasm_bindgen_futures::spawn_local;
 
-use diario_shared::{markdown_de, Application, Entry, EntrySummary, TagCount};
+use diario_shared::{
+    markdown_de, query_a, query_de, Application, Entry, EntryQuery, EntrySummary, TagCount,
+};
 
-use crate::api::{self, EntryFilters};
+use crate::api;
 use crate::ffi::{
-    current_path, descargar_fichero, imprimir, on_popstate, push_path, render_diagrams,
+    copiar_al_portapapeles, current_path, current_search, descargar_fichero, hay_portapapeles,
+    imprimir, on_popstate, push_path, render_diagrams,
 };
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum View {
     List,
     Detail(i64),
+    /// Todo lo que cumple el filtro, entero y en una sola pagina.
+    Hilo,
 }
 
 fn parse_route(path: &str) -> View {
@@ -22,24 +27,111 @@ fn parse_route(path: &str) -> View {
             return View::Detail(id);
         }
     }
+    if path.trim_end_matches('/') == "/hilo" {
+        return View::Hilo;
+    }
     View::List
+}
+
+/// Ruta que le corresponde a cada vista.
+///
+/// El detalle tambien arrastra los filtros aunque no los use: si su URL no los
+/// llevara, volver con el boton de atras desde una entrada los borraria, porque
+/// popstate los lee de la query.
+fn ruta_de(view: View) -> String {
+    match view {
+        View::Hilo => "/hilo".to_string(),
+        View::Detail(id) => format!("/entry/{id}"),
+        View::List => "/".to_string(),
+    }
+}
+
+/// Escribe la vista y los filtros en la barra de direcciones.
+///
+/// No apila nada si la URL ya dice lo mismo, y de eso depende que el boton de
+/// atras funcione: al volver, popstate repone los filtros, el Effect recalcula
+/// esta misma URL y no empuja una entrada nueva encima de la que se acaba de
+/// dejar.
+fn sincronizar_url(view: View, query: &str) {
+    let ruta = ruta_de(view);
+
+    // La comparacion va sobre la query **normalizada**, no sobre el texto. Un
+    // enlace escrito a mano con los parametros en otro orden o con otro escape
+    // -?tag=x&application=y, o %20 frente a +- significa exactamente lo mismo,
+    // y compararlo en crudo apilaria una entrada de historial que al pulsar
+    // atras no deshace ningun filtro: lleva a otra URL con los mismos filtros.
+    if current_path() == ruta && query_de(&query_a(&current_search())) == query {
+        return;
+    }
+
+    let destino = if query.is_empty() {
+        ruta
+    } else {
+        format!("{ruta}?{query}")
+    };
+    push_path(&destino);
+}
+
+/// Cambia de vista llevandose los filtros puestos.
+fn ir_a(view: RwSignal<View>, destino: View, q: &EntryQuery) {
+    view.set(destino);
+    sincronizar_url(destino, &query_de(q));
 }
 
 #[component]
 pub fn App() -> impl IntoView {
+    // Los filtros salen de la URL, no de cero: asi un enlace pegado reproduce
+    // la busqueda entera y no solo la vista.
+    let inicial = query_a(&current_search());
+
     let apps = RwSignal::new(Vec::<Application>::new());
-    let selected_app = RwSignal::new(Option::<String>::None);
-    let from = RwSignal::new(String::new());
-    let to = RwSignal::new(String::new());
-    let search = RwSignal::new(String::new());
-    let selected_tag = RwSignal::new(Option::<String>::None);
+    let selected_app = RwSignal::new(inicial.application.clone());
+    let from = RwSignal::new(inicial.from.clone().unwrap_or_default());
+    let to = RwSignal::new(inicial.to.clone().unwrap_or_default());
+    let search = RwSignal::new(inicial.q.clone().unwrap_or_default());
+    let selected_tag = RwSignal::new(inicial.tag.clone());
     let tags = RwSignal::new(Vec::<TagCount>::new());
-    let solo_pendientes = RwSignal::new(false);
+    // Se guarda el Option<bool> entero y no un booleano: la API distingue
+    // "solo pendientes" (false) de "solo exportadas" (true), y quedarse con el
+    // booleano convertia un exported=true de la URL en "sin filtro", cambiando
+    // en silencio los resultados respecto a lo que pedia el enlace.
+    let filtro_export = RwSignal::new(inicial.exported);
     let entries = RwSignal::new(Vec::<EntrySummary>::new());
     let loading = RwSignal::new(false);
     let view = RwSignal::new(parse_route(&current_path()));
+    // Se incrementa cuando algo cambia los datos por debajo (exportar, marcar):
+    // los filtros siguen siendo los mismos, asi que sin esto la lista seguiria
+    // enseñando lo de antes hasta tocar otro filtro o recargar.
+    let refrescar = RwSignal::new(0u32);
+    // Ultima peticion lanzada. Cada cambio de filtro dispara la suya, y sin
+    // contador una respuesta lenta puede llegar despues de otra mas nueva y
+    // dejar la lista enseñando algo que no es lo que dice la URL.
+    let generacion = RwSignal::new(0u32);
 
-    on_popstate(move || view.set(parse_route(&current_path())));
+    // Un solo sitio donde se juntan los filtros: lo leen el listado, el hilo y
+    // la URL, asi que no pueden acabar diciendo cosas distintas.
+    let consulta = Memo::new(move |_| EntryQuery {
+        application: selected_app.get().filter(|s| !s.is_empty()),
+        from: Some(from.get()).filter(|s| !s.is_empty()),
+        to: Some(to.get()).filter(|s| !s.is_empty()),
+        q: Some(search.get()).filter(|s| !s.is_empty()),
+        tag: selected_tag.get().filter(|s| !s.is_empty()),
+        exported: filtro_export.get(),
+        ..Default::default()
+    });
+
+    // El boton de atras repone vista y filtros a la vez: la URL los lleva los
+    // dos, asi que restaurar solo uno dejaria la pagina mintiendo.
+    on_popstate(move || {
+        view.set(parse_route(&current_path()));
+        let q = query_a(&current_search());
+        selected_app.set(q.application.clone());
+        from.set(q.from.clone().unwrap_or_default());
+        to.set(q.to.clone().unwrap_or_default());
+        search.set(q.q.clone().unwrap_or_default());
+        selected_tag.set(q.tag.clone());
+        filtro_export.set(q.exported);
+    });
 
     spawn_local(async move {
         if let Ok(a) = api::fetch_applications().await {
@@ -53,52 +145,64 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Recarga las entradas cuando cambia cualquier filtro.
-    Effect::new(move |anterior: Option<()>| {
-        let f = EntryFilters {
-            application: selected_app.get(),
-            from: from.get(),
-            to: to.get(),
-            search: search.get(),
-            tag: selected_tag.get(),
-            exported: solo_pendientes.get().then_some(false),
-        };
+    // Recarga las entradas cuando cambia cualquier filtro, o cuando algo ha
+    // tocado los datos.
+    Effect::new(move |anterior: Option<EntryQuery>| {
+        let f = consulta.get();
+        let _ = refrescar.get();
+
+        // Un refresco de datos no es un cambio de filtro: no debe sacarte del
+        // detalle mientras lo estas leyendo.
+        let cambio_filtro = anterior.as_ref().is_some_and(|previo| *previo != f);
 
         // Al cambiar un filtro se vuelve al listado. Los resultados solo se
         // pintan en View::List, asi que desde el detalle se filtraba a ciegas:
         // la barra lateral y las fechas funcionaban, pero no se veia nada y
-        // parecia que estaban rotas.
+        // parecia que estaban rotas. El hilo si los pinta, y se queda.
         //
-        // La guarda 'anterior.is_some()' no es cosmetica: este Effect tambien
-        // corre al montar, y sin ella un enlace directo a /entry/N rebotaria al
+        // Comparar con el filtro anterior no es cosmetica: este Effect tambien
+        // corre al montar, y sin eso un enlace directo a /entry/N rebotaria al
         // listado antes de que se llegara a ver la entrada.
         //
         // view se lee sin rastrear a proposito: rastrearlo haria que el Effect
         // se reejecutara al cambiar de vista y, con el set de aqui dentro, seria
         // un bucle.
-        if anterior.is_some() && !matches!(view.get_untracked(), View::List) {
-            push_path("/");
+        if cambio_filtro && matches!(view.get_untracked(), View::Detail(_)) {
             view.set(View::List);
         }
+        sincronizar_url(view.get_untracked(), &query_de(&f));
 
+        let mia = generacion.get_untracked() + 1;
+        generacion.set(mia);
         loading.set(true);
+        let consultada = f.clone();
         spawn_local(async move {
-            match api::fetch_entries(f).await {
+            let resultado = api::fetch_entries(&consultada).await;
+            // Si ya hay otra peticion mas nueva en vuelo, esta respuesta esta
+            // caducada: ni se pinta ni apaga el indicador de carga, que le toca
+            // a la que llegue la ultima.
+            if generacion.get_untracked() != mia {
+                return;
+            }
+            match resultado {
                 Ok(page) => entries.set(page.entries),
                 Err(_) => entries.set(Vec::new()),
             }
             loading.set(false);
         });
+
+        f
     });
 
     view! {
         <div class="app">
             <Header search=search selected_tag=selected_tag />
-            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag tags=tags solo_pendientes=solo_pendientes />
+            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag tags=tags filtro_export=filtro_export consulta=consulta view=view refrescar=refrescar />
             <main class="main">
                 {move || match view.get() {
-                    View::List => view! { <Timeline entries=entries loading=loading view=view selected_tag=selected_tag /> }.into_any(),
-                    View::Detail(id) => view! { <EntryDetail id=id view=view /> }.into_any(),
+                    View::List => view! { <Timeline entries=entries loading=loading view=view selected_tag=selected_tag consulta=consulta /> }.into_any(),
+                    View::Detail(id) => view! { <EntryDetail id=id view=view consulta=consulta refrescar=refrescar /> }.into_any(),
+                    View::Hilo => view! { <HiloView consulta=consulta view=view /> }.into_any(),
                 }}
             </main>
         </div>
@@ -137,8 +241,12 @@ fn Sidebar(
     to: RwSignal<String>,
     selected_tag: RwSignal<Option<String>>,
     tags: RwSignal<Vec<TagCount>>,
-    solo_pendientes: RwSignal<bool>,
+    filtro_export: RwSignal<Option<bool>>,
+    consulta: Memo<EntryQuery>,
+    view: RwSignal<View>,
+    refrescar: RwSignal<u32>,
 ) -> impl IntoView {
+    let estado_export = RwSignal::new(String::new());
     view! {
         <aside class="sidebar">
             <h2>"Aplicaciones"</h2>
@@ -214,19 +322,73 @@ fn Sidebar(
                 <label class="check">
                     <input
                         type="checkbox"
-                        prop:checked=move || solo_pendientes.get()
-                        on:change=move |ev| solo_pendientes.set(event_target_checked(&ev))
+                        prop:checked=move || filtro_export.get() == Some(false)
+                        on:change=move |ev| filtro_export
+                            .set(event_target_checked(&ev).then_some(false))
                     />
                     " Solo sin exportar"
                 </label>
+                // exported=true no lo genera la interfaz, solo puede venir de la
+                // URL. Se respeta, pero se enseña: un filtro activo e invisible
+                // hace que la lista parezca incompleta sin motivo.
+                {move || (filtro_export.get() == Some(true)).then(|| view! {
+                    <button
+                        class="btn-clear"
+                        title="Filtro puesto desde la URL (exported=true). Pulsa para quitarlo"
+                        on:click=move |_| filtro_export.set(None)
+                    >"Solo exportadas ×"</button>
+                })}
+                <button
+                    class="btn-clear"
+                    title="Escribe ahora los markdown que aun no se han volcado a los repositorios"
+                    on:click=move |_| {
+                        estado_export.set("Exportando…".to_string());
+                        spawn_local(async move {
+                            match api::exportar_ahora().await {
+                                Ok((escritas, pendientes)) => {
+                                    // Lo exportado deja de estar pendiente: sin
+                                    // recargar, con "Solo sin exportar" puesto
+                                    // las tarjetas recien escritas seguian ahi.
+                                    if escritas > 0 {
+                                        refrescar.update(|n| *n += 1);
+                                    }
+                                    estado_export.set(
+                                    if pendientes > 0 {
+                                        format!("{escritas} escrita(s), {pendientes} sin destino")
+                                    } else if escritas > 0 {
+                                        format!("{escritas} escrita(s)")
+                                    } else {
+                                        "No quedaba nada".to_string()
+                                    },
+                                )
+                                }
+                                Err(e) => estado_export.set(format!("Error: {e}")),
+                            }
+                        });
+                    }
+                >
+                    "Exportar pendientes"
+                </button>
+                {move || {
+                    let m = estado_export.get();
+                    (!m.is_empty()).then(|| view! { <p class="estado-export">{m}</p> })
+                }}
+                <button
+                    class="btn-clear btn-hilo"
+                    title="Muestra en una sola pagina todo lo que cumple este filtro, listo para copiarselo a un agente"
+                    on:click=move |_| ir_a(view, View::Hilo, &consulta.get_untracked())
+                >
+                    "Ver en hilo"
+                </button>
                 <button
                     class="btn-clear"
                     on:click=move |_| {
+                        estado_export.set(String::new());
                         selected_app.set(None);
                         from.set(String::new());
                         to.set(String::new());
                         selected_tag.set(None);
-                        solo_pendientes.set(false);
+                        filtro_export.set(None);
                     }
                 >
                     "Limpiar filtros"
@@ -242,6 +404,7 @@ fn Timeline(
     loading: RwSignal<bool>,
     view: RwSignal<View>,
     selected_tag: RwSignal<Option<String>>,
+    consulta: Memo<EntryQuery>,
 ) -> impl IntoView {
     move || {
         if loading.get() && entries.get().is_empty() {
@@ -260,7 +423,7 @@ fn Timeline(
                 view! {
                     <div class="day-group">
                         <p class="day-heading">{day}</p>
-                        {list.into_iter().map(|e| entry_card(e, view, selected_tag)).collect_view()}
+                        {list.into_iter().map(|e| entry_card(e, view, selected_tag, consulta)).collect_view()}
                     </div>
                 }
             })
@@ -273,6 +436,7 @@ fn entry_card(
     e: EntrySummary,
     view: RwSignal<View>,
     selected_tag: RwSignal<Option<String>>,
+    consulta: Memo<EntryQuery>,
 ) -> impl IntoView {
     let id = e.id;
     let time = e.created_at.format("%H:%M").to_string();
@@ -286,10 +450,7 @@ fn entry_card(
     view! {
         <div
             class="card"
-            on:click=move |_| {
-                push_path(&format!("/entry/{id}"));
-                view.set(View::Detail(id));
-            }
+            on:click=move |_| ir_a(view, View::Detail(id), &consulta.get_untracked())
         >
             <div class="row">
                 <span class="badge">{e.application_name.clone()}</span>
@@ -319,7 +480,12 @@ fn entry_card(
 }
 
 #[component]
-fn EntryDetail(id: i64, view: RwSignal<View>) -> impl IntoView {
+fn EntryDetail(
+    id: i64,
+    view: RwSignal<View>,
+    consulta: Memo<EntryQuery>,
+    refrescar: RwSignal<u32>,
+) -> impl IntoView {
     let entry = RwSignal::new(Option::<Entry>::None);
 
     spawn_local(async move {
@@ -340,22 +506,19 @@ fn EntryDetail(id: i64, view: RwSignal<View>) -> impl IntoView {
         <div class="detail">
             <button
                 class="back"
-                on:click=move |_| {
-                    push_path("/");
-                    view.set(View::List);
-                }
+                on:click=move |_| ir_a(view, View::List, &consulta.get_untracked())
             >
                 "← Volver"
             </button>
             {move || match entry.get() {
                 None => view! { <p class="loading">"Cargando…"</p> }.into_any(),
-                Some(e) => detail_body(e, entry).into_any(),
+                Some(e) => detail_body(e, entry, refrescar).into_any(),
             }}
         </div>
     }
 }
 
-fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
+fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>, refrescar: RwSignal<u32>) -> impl IntoView {
     let date = e.created_at.format("%d/%m/%Y %H:%M").to_string();
     let model = e.model.clone().unwrap_or_else(|| "—".to_string());
     let meta = format!("{} · {}", e.agent_name, model);
@@ -403,6 +566,9 @@ fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
                             if let Ok(e) = api::fetch_entry(id).await {
                                 entry.set(Some(e));
                             }
+                            // Y la lista, que con el filtro de pendientes puesto
+                            // acaba de quedarse desfasada.
+                            refrescar.update(|n| *n += 1);
                         }
                     });
                 }
@@ -460,4 +626,225 @@ fn group_by_day(items: Vec<EntrySummary>) -> Vec<(String, Vec<EntrySummary>)> {
         }
     }
     out
+}
+
+/// Como se describe un filtro en una linea: "diario-ia · #build · desde …".
+fn descripcion_filtros(q: &EntryQuery) -> String {
+    let mut partes = Vec::new();
+    if let Some(a) = &q.application {
+        partes.push(a.clone());
+    }
+    if let Some(t) = &q.tag {
+        partes.push(format!("#{t}"));
+    }
+    if let Some(d) = &q.from {
+        partes.push(format!("desde {d}"));
+    }
+    if let Some(h) = &q.to {
+        partes.push(format!("hasta {h}"));
+    }
+    if let Some(b) = &q.q {
+        partes.push(format!("\"{b}\""));
+    }
+    match q.exported {
+        Some(false) => partes.push("sin exportar".to_string()),
+        Some(true) => partes.push("ya exportadas".to_string()),
+        None => {}
+    }
+    if partes.is_empty() {
+        "todo el diario".to_string()
+    } else {
+        partes.join(" · ")
+    }
+}
+
+fn cuantas(n: usize) -> String {
+    if n == 1 {
+        "1 entrada".to_string()
+    } else {
+        format!("{n} entradas")
+    }
+}
+
+/// Markdown del hilo entero: una cabecera que dice de que busqueda salio y las
+/// entradas separadas por una regla.
+///
+/// Cada entrada se arma con `markdown_de`, la misma funcion que escribe los
+/// ficheros de los repositorios: lo que copias aqui y lo que hay en disco son
+/// el mismo texto por construccion.
+fn markdown_del_hilo(q: &EntryQuery, entradas: &[Entry]) -> String {
+    let mut s = format!(
+        "# Diario-IA — {} ({})\n\n",
+        descripcion_filtros(q),
+        cuantas(entradas.len())
+    );
+    s.push_str(
+        &entradas
+            .iter()
+            .map(markdown_de)
+            .collect::<Vec<_>>()
+            .join("\n---\n\n"),
+    );
+    s
+}
+
+fn nombre_del_hilo(q: &EntryQuery) -> String {
+    let ambito = q
+        .application
+        .clone()
+        .or_else(|| q.tag.clone())
+        .unwrap_or_else(|| "diario".to_string());
+    format!(
+        "hilo-{ambito}-{}.md",
+        chrono::Local::now().format("%Y%m%d-%H%M%S")
+    )
+}
+
+/// Todo lo que cumple el filtro, entero, en una sola pagina y en orden
+/// cronologico: la forma de pasarle a un agente el contexto de una aplicacion
+/// sin ir entrada por entrada.
+#[component]
+fn HiloView(consulta: Memo<EntryQuery>, view: RwSignal<View>) -> impl IntoView {
+    let entradas = RwSignal::new(Vec::<Entry>::new());
+    let error = RwSignal::new(String::new());
+    let cargando = RwSignal::new(true);
+    let aviso = RwSignal::new(String::new());
+    // Escribiendo en el buscador sale una peticion por tecla. Sin contador, una
+    // respuesta lenta puede llegar detras de otra mas nueva y dejar el hilo
+    // enseñando entradas que no son las que pide la URL.
+    let generacion = RwSignal::new(0u32);
+
+    Effect::new(move |_| {
+        let q = consulta.get();
+        let mia = generacion.get_untracked() + 1;
+        generacion.set(mia);
+        cargando.set(true);
+        aviso.set(String::new());
+        spawn_local(async move {
+            let resultado = api::fetch_hilo(&q).await;
+            if generacion.get_untracked() != mia {
+                return;
+            }
+            match resultado {
+                Ok(v) => {
+                    entradas.set(v);
+                    error.set(String::new());
+                }
+                Err(e) => {
+                    entradas.set(Vec::new());
+                    error.set(e);
+                }
+            }
+            cargando.set(false);
+        });
+    });
+
+    // Tras inyectar el HTML de las respuestas, renderiza diagramas y resalta codigo.
+    Effect::new(move |_| {
+        if !entradas.get().is_empty() {
+            render_diagrams();
+        }
+    });
+
+    let texto = move || markdown_del_hilo(&consulta.get_untracked(), &entradas.get_untracked());
+
+    view! {
+        <div class="detail hilo">
+            <div class="acciones">
+                <button class="back" on:click=move |_| ir_a(view, View::List, &consulta.get_untracked())>
+                    "← Volver"
+                </button>
+                <button
+                    class="btn"
+                    title="Copia el hilo entero en markdown, listo para pegarselo a un agente"
+                    on:click=move |_| {
+                        let md = texto();
+                        if hay_portapapeles() {
+                            copiar_al_portapapeles(&md, move |ok| {
+                                aviso.set(
+                                    if ok { "Copiado".to_string() }
+                                    else { "El navegador no dejo copiar".to_string() },
+                                );
+                            });
+                        } else {
+                            // Sin contexto seguro no hay portapapeles: en vez de
+                            // no hacer nada, el hilo se baja como fichero.
+                            descargar_fichero(&nombre_del_hilo(&consulta.get_untracked()), &md);
+                            aviso.set("Sin portapapeles: descargado como fichero".to_string());
+                        }
+                    }
+                >
+                    "Copiar markdown"
+                </button>
+                <button
+                    class="btn"
+                    title="Descarga el hilo entero como un solo .md"
+                    on:click=move |_| descargar_fichero(
+                        &nombre_del_hilo(&consulta.get_untracked()),
+                        &texto(),
+                    )
+                >
+                    "Descargar .md"
+                </button>
+                <button class="btn" title="Imprimir o guardar como PDF" on:click=move |_| imprimir()>
+                    "PDF"
+                </button>
+                <span class="estado-export">{move || aviso.get()}</span>
+            </div>
+            <h1>"Hilo"</h1>
+            <p class="meta-hilo">
+                {move || format!(
+                    "{} · {}",
+                    descripcion_filtros(&consulta.get()),
+                    cuantas(entradas.get().len()),
+                )}
+            </p>
+            {move || {
+                let fallo = error.get();
+                if !fallo.is_empty() {
+                    return view! { <div class="empty">{fallo}</div> }.into_any();
+                }
+                if cargando.get() {
+                    return view! { <p class="loading">"Cargando…"</p> }.into_any();
+                }
+                let items = entradas.get();
+                if items.is_empty() {
+                    return view! {
+                        <div class="empty">"No hay tareas registradas para este filtro."</div>
+                    }
+                    .into_any();
+                }
+                items.into_iter().map(bloque_de_hilo).collect_view().into_any()
+            }}
+        </div>
+    }
+}
+
+/// Una entrada dentro del hilo. A diferencia del detalle, el prompt va
+/// desplegado: el hilo se lee y se copia de un tiron, y un <details> cerrado
+/// obliga a abrir uno por uno lo que precisamente se venia a leer junto.
+fn bloque_de_hilo(e: Entry) -> impl IntoView {
+    let fecha = e.created_at.format("%d/%m/%Y %H:%M").to_string();
+    let modelo = e.model.clone().unwrap_or_else(|| "—".to_string());
+    let meta = format!("{} · {} · {}", e.agent_name, modelo, fecha);
+    let resumen = e.task_summary.clone().filter(|s| !s.is_empty());
+    view! {
+        <article class="hilo-entrada">
+            <h2>{e.title.clone()}</h2>
+            <div class="meta-row">
+                <span class="badge">{e.application_name.clone()}</span>
+                <span class="meta">{meta}</span>
+                {e.tags.clone().into_iter().map(|t| view! { <span class="tag">{t}</span> }).collect_view()}
+            </div>
+            <div class="section">
+                <h3>"Prompt"</h3>
+                <div class="prompt-box">{e.prompt.clone()}</div>
+            </div>
+            {resumen.map(|s| view! { <div class="section"><h3>"Tarea"</h3><div class="summary-box">{s}</div></div> })}
+            <div class="section">
+                <h3>"Respuesta"</h3>
+                <div class="markdown" inner_html=e.response_html.clone()></div>
+            </div>
+        </article>
+    }
 }

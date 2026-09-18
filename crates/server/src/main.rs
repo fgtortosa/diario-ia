@@ -203,6 +203,10 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
         // notified(), asi que al arrancar ya arrastra lo que quedara atrasado.
         // Va en spawn_blocking porque escribe a disco y usa SQLite de forma
         // sincrona: bloquear un hilo del runtime pararia tambien el HTTP.
+        // Copias para la pasada de cierre, que corre despues del servidor.
+        let store_cierre = state.store.clone();
+        let tareas_cierre = config.tareas_dir_efectivo().map(|s| s.to_string());
+
         {
             let store = state.store.clone();
             // Por el accesor, para que la cadena vacia de DIARIO_TAREAS_DIR
@@ -233,9 +237,82 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
         let app = api::router(state);
         let listener = tokio::net::TcpListener::bind(config.bind).await?;
         tracing::info!("Diario-IA escuchando en http://{}", config.bind);
-        axum::serve(listener, app).await?;
+        axum::serve(listener, app)
+            .with_graceful_shutdown(esperar_cierre())
+            .await?;
+
+        // Una ultima pasada antes de salir, para no dejar nada sin volcar.
+        //
+        // No es una red de seguridad imprescindible: como nada se marca
+        // exportado hasta que se escribe, lo que quede pendiente se recupera
+        // solo en el siguiente arranque. Esto ahorra esperar al reinicio.
+        //
+        // Ojo: solo corre si el proceso recibe la senal. Una tarea de Windows
+        // detenida con Stop-ScheduledTask puede morir sin avisar, y entonces
+        // esto no se ejecuta. Para ese caso esta el boton de la web.
+        let store = store_cierre;
+        let dir = tareas_cierre;
+        match tokio::task::spawn_blocking(move || {
+            exporter::exportar_pendientes(&store, dir.as_deref())
+        })
+        .await
+        {
+            Ok(Ok(n)) if n > 0 => tracing::info!("al cerrar se exportaron {n} entradas"),
+            Ok(Ok(_)) => tracing::info!("al cerrar no quedaba nada por exportar"),
+            Ok(Err(e)) => tracing::warn!("fallo al exportar durante el cierre: {e}"),
+            Err(e) => tracing::warn!("la exportacion de cierre se cayo: {e}"),
+        }
         Ok(())
     })
+}
+
+/// Espera a que el sistema pida cerrar.
+///
+/// En Windows no basta con Ctrl-C: cerrar la consola, apagar o cerrar sesion
+/// llegan como eventos distintos, y un servicio que solo escuche Ctrl-C se
+/// muere sin ejecutar nada en esos casos.
+async fn esperar_cierre() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows;
+        let mut cerrar = match windows::ctrl_close() {
+            Ok(s) => s,
+            Err(_) => return ctrl_c.await,
+        };
+        let mut apagar = match windows::ctrl_shutdown() {
+            Ok(s) => s,
+            Err(_) => return ctrl_c.await,
+        };
+        let mut sesion = match windows::ctrl_logoff() {
+            Ok(s) => s,
+            Err(_) => return ctrl_c.await,
+        };
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = cerrar.recv() => {}
+            _ = apagar.recv() => {}
+            _ = sesion.recv() => {}
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut term = match signal(SignalKind::terminate()) {
+            Ok(s) => s,
+            Err(_) => return ctrl_c.await,
+        };
+        tokio::select! {
+            _ = ctrl_c => {}
+            _ = term.recv() => {}
+        }
+    }
+
+    tracing::info!("cierre solicitado: dejando de aceptar peticiones");
 }
 
 fn run_key(action: KeyAction) -> anyhow::Result<()> {

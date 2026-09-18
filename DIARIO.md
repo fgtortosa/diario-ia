@@ -423,3 +423,149 @@ cambió a marcar *como exportada*, que es la dirección en la que el cambio se n
 
 En marcha: con la opción encendida, el `PUT` sin clave responde 200 y crear entradas sigue
 respondiendo 401. La tarea programada la lleva encendida porque escucha en 127.0.0.1.
+
+---
+
+## 2026-09-18 07:55 — Volcar lo pendiente al arrancar, al cerrar y a mano
+
+**Al arrancar ya funcionaba**: la primera vuelta del bucle del exportador corre antes del
+primer `notified().await`. No hizo falta tocarlo, y se comprobó en el log al arrancar un
+servidor con una entrada pendiente: `exportadas 1 entradas al repositorio`.
+
+**Al cerrar** se añade `with_graceful_shutdown`, escuchando Ctrl-C y, en Windows, cierre de
+consola, apagado y cierre de sesión; después una pasada final.
+
+**A mano**, botón *Exportar pendientes* en la barra lateral, contra un
+`POST /api/v1/exportar` que devuelve cuántas escribió y cuántas quedan.
+
+**Lo que había que medir, y se midió**
+
+El cierre ordenado **no sirve con la tarea programada**. Prueba: se deja una entrada
+pendiente apuntando el repositorio a una ruta rota, se repara el destino sin avisar al
+servidor, y se ejecuta `Stop-ScheduledTask`. El fichero **no** aparece: el proceso muere
+sin recibir el evento.
+
+En cambio, con una señal real —`taskkill` sin `/F` sobre un servidor arrancado a mano— el
+log muestra `cierre solicitado: dejando de aceptar peticiones` seguido de la pasada final.
+
+Por eso el botón no es una comodidad por no ver la consola: es **la vía fiable** en la
+configuración habitual, y el cierre ordenado es el añadido que funciona cuando el sistema
+lo permite.
+
+**Lo que conviene no olvidar**
+
+Nada de esto evita una pérdida, porque no la hay: como una entrada no se marca exportada
+hasta haberse escrito, lo pendiente al morir el proceso lo recupera la pasada de arranque.
+Esto ahorra esperar al reinicio.
+
+**Verificación**
+
+50 tests. Y en el navegador: con una entrada pendiente de verdad, pulsar el botón muestra
+«1 escrita(s)» y la cola pasa de 1 a 0, sin errores de consola.
+
+---
+
+## 2026-09-18 09:00 — URLs navegables y vista en hilo
+
+Los filtros pasan a la query de la URL, en los dos sentidos, y se añade `/hilo`: la misma
+búsqueda mostrada entera en una sola página, para copiársela a un agente.
+
+**Decisiones**
+
+- **Los nombres de los parámetros son los de la API**, no unos propios en castellano. La
+  query que ves en el navegador es la que vale para `curl`: `/hilo?application=x&tag=y` y
+  `/api/v1/hilo?application=x&tag=y` llevan la misma cadena, y no hay tabla de traducción
+  que pueda desincronizarse.
+- **`query_de`/`query_a` viven en `shared`.** `crates/client` solo se compila a wasm, así
+  que un test ahí no correría con `cargo test`; y con una sola definición la URL del
+  navegador y la de la API se construyen igual **por construcción**, como `markdown_de`
+  hace con el fichero exportado. La librería es `serde_urlencoded`, que ya estaba en el
+  lock porque la arrastra axum: es la misma con la que el servidor lee la query.
+- **No se apila nada si la URL ya dice lo mismo.** De eso depende que el botón de atrás
+  funcione: al volver, `popstate` repone los filtros, el `Effect` recalcula esa misma URL
+  y no empuja una entrada encima de la que se acaba de dejar.
+- **La URL del detalle arrastra los filtros aunque no los use.** Sin eso, volver con el
+  botón de atrás desde una entrada los borraba, porque `popstate` los lee de la query y
+  `/entry/27` no lleva ninguna.
+- **El hilo va en orden ascendente y sin recortar nada**: es una historia, y se lee de
+  principio a fin. El prompt va desplegado y no dentro de un `<details>` como en el
+  detalle, porque el hilo se lee y se copia de un tirón.
+- **Tope de 200 entradas, con error en vez de truncado.** El hilo devuelve las entradas
+  enteras, no el fragmento del listado, así que sin tope `/api/v1/hilo` sin filtros se
+  traía el diario completo a memoria —y es ruta de lectura, con `require_viewer` inactivo
+  mientras no exista `DIARIO_VIEWER_TOKEN`—. Cortar en silencio sería peor que el error:
+  le daría al agente media historia sin que nadie se entere.
+- **Si no hay portapapeles, el botón descarga el fichero.** `navigator.clipboard` solo
+  existe en contexto seguro: `localhost` sí, por IP en `http` no. Se comprueba antes y se
+  dice lo que pasó, en vez de que el botón no haga nada.
+
+**Verificación**
+
+54 tests, `just clippy` en verde y comprobación en el navegador con Playwright contra la
+base real, con 0 errores de consola:
+
+| Qué | Resultado |
+|---|---|
+| Filtros a la URL | Pulsar aplicación y etiqueta deja `/?application=diario-ia&tag=rust` |
+| Atrás | Deshace filtro a filtro: quita la etiqueta (12 tarjetas) y luego la aplicación |
+| Enlace directo | `/hilo?application=redes-ice-netcore&from=2026-09-01&q=build` repone barra lateral, fecha y buscador, y muestra 1 entrada |
+| Hilo | 2 entradas completas, ascendentes, con el prompt visible |
+| Copiar markdown | 5.505 caracteres en el portapapeles, cabecera correcta, 1 separador y 6 secciones |
+| Detalle | `/entry/27?tag=rust` conserva el filtro al volver y al pulsar atrás |
+
+**De paso**
+
+`just clippy` estaba rojo desde el PR anterior por dos avisos del exportador (un import y
+un método que en producción ya no llama nadie). Corregidos: la puerta de lint del
+repositorio vuelve a pasar.
+
+---
+
+## 2026-09-18 09:50 — Revisión del PR #8: cuatro arreglos y un rechazo
+
+Copilot dejó cinco comentarios. Cuatro eran ciertos y están corregidos; el quinto no se
+sostiene en este código.
+
+**Lo corregido**
+
+- **La URL se comparaba en crudo.** Un enlace equivalente con los parámetros en otro orden
+  o con otro escape se consideraba distinto, así que al abrirlo se apilaba una entrada de
+  historial: pulsar atrás no deshacía ningún filtro, llevaba a otra URL con los mismos.
+  Ahora la comparación va sobre la query normalizada con `query_a`/`query_de`.
+- **`exported=true` se perdía.** El estado del cliente era un booleano («solo pendientes»),
+  así que un `exported=true` de la URL se convertía en «sin filtro», se borraba del enlace
+  y la lista salía con las pendientes incluidas diciendo lo contrario. Se guarda el
+  `Option<bool>` entero. Como la interfaz no genera ese valor —solo puede venir de la
+  URL—, se enseña con un chip «Solo exportadas ×»: un filtro activo e invisible hace que
+  la lista parezca incompleta sin motivo.
+- **Exportar y marcar no refrescaban la lista.** Con «Solo sin exportar» puesto, las
+  tarjetas ya exportadas seguían ahí hasta tocar otro filtro. Un contador dispara la
+  consulta actual. El matiz: el `Effect` volvía al listado con `anterior.is_some()`, así
+  que un refresco te habría sacado del detalle mientras lo leías; ahora compara el filtro
+  anterior con el actual y solo cambia de vista si el filtro cambió de verdad.
+- **Respuestas caducadas.** Cada tecla del buscador lanza su petición y cualquiera escribía
+  el resultado. Contador de generación en el listado y en el hilo: la que llega tarde ni
+  pinta ni apaga el indicador de carga.
+
+**Lo rechazado, y por qué**
+
+Ordenar el hilo por `created_at` en vez de por `id`. Comprobado antes de responder:
+`NewEntry` no tiene campo de fecha —la sella el servidor con `Utc::now()`—, la migración
+0002 no insertó entradas con fechas ajenas, y sobre la base real las 31 entradas están en
+RFC3339 UTC y `ORDER BY id` da la misma secuencia que `ORDER BY created_at`. Pero lo que
+pesa es que **el listado pagina con un cursor sobre el id**: cambiar el orden del hilo haría
+que las dos vistas discreparan sobre el mismo filtro. Queda documentado en `hilo()`, con la
+condición que obligaría a revisarlo (que algún día se pueda fechar una entrada desde fuera,
+y entonces habría que cambiar orden y cursor a la vez).
+
+**Verificación**
+
+54 tests, clippy en verde y comprobación en navegador con 0 errores de consola: la URL no
+se reescribe al abrir un enlace con los parámetros invertidos; `exported=true` viaja en la
+petición y sobrevive a cambiar otro filtro; marcar desde el detalle dispara una consulta
+nueva del listado **y** deja la vista donde estaba; y escribir «build» letra a letra sin
+esperar acaba coherente con la URL.
+
+La carrera de respuestas no la he reproducido: el servidor es local y responde en
+milisegundos, haría falta forzar una respuesta lenta. Lo comprobado es que el guardado no
+rompe el camino normal.
