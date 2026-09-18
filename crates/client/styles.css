@@ -154,6 +154,18 @@ details.prompt summary { cursor: pointer; color: var(--muted); font-size: 13px; 
          cursor: pointer; margin-top: 8px; }
 
 /* ---------------------------------------------------------------------------
+   Vista en hilo: todo lo que cumple el filtro, seguido y en una sola pagina.
+   Se apoya en .detail para el ancho y en .section para los bloques; lo propio
+   es la separacion entre entradas, que es lo unico que aqui hay que leer como
+   una lista larga. */
+.btn-hilo { border-color: var(--accent); color: var(--accent); }
+.meta-hilo { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+.hilo-entrada { padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 26px; }
+.hilo-entrada:last-child { border-bottom: none; }
+.hilo-entrada > h2 { font-size: 19px; margin: 0 0 8px; }
+.hilo-entrada .meta-row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+
+/* ---------------------------------------------------------------------------
    Impresion y "guardar como PDF".
 
    El boton PDF llama a window.print(): no hay generador de PDF en el binario.
@@ -191,6 +203,7 @@ details.prompt summary { cursor: pointer; color: var(--muted); font-size: 13px; 
 
   /* No partir por la mitad lo que se lee como una unidad. */
   pre, code, blockquote, table, .card { break-inside: avoid; page-break-inside: avoid; }
+  .hilo-entrada { break-inside: auto; border-bottom: 1px solid #ccc !important; }
   h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
 
   /* Los enlaces impresos no sirven de nada sin su destino. */

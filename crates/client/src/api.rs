@@ -1,13 +1,7 @@
 //! Cliente HTTP contra la API REST del servidor central (mismo origen).
 
-use diario_shared::{Application, Entry, EntryPage, TagCount};
+use diario_shared::{query_de, Application, Entry, EntryPage, EntryQuery, TagCount};
 use gloo_net::http::Request;
-
-fn enc(s: &str) -> String {
-    js_sys::encode_uri_component(s)
-        .as_string()
-        .unwrap_or_default()
-}
 
 /// Fuerza una pasada del exportador. Devuelve (escritas, pendientes).
 pub async fn exportar_ahora() -> Result<(i64, i64), String> {
@@ -60,44 +54,41 @@ pub async fn fetch_applications() -> Result<Vec<Application>, String> {
         .map_err(|e| e.to_string())
 }
 
-#[derive(Clone, Default)]
-pub struct EntryFilters {
-    pub application: Option<String>,
-    pub from: String,
-    pub to: String,
-    pub search: String,
-    pub tag: Option<String>,
-    /// Some(false) = solo las que aun no se han exportado.
-    pub exported: Option<bool>,
-}
-
-pub async fn fetch_entries(f: EntryFilters) -> Result<EntryPage, String> {
-    let mut url = String::from("/api/v1/entries?limit=200");
-    if let Some(a) = f.application.filter(|s| !s.is_empty()) {
-        url.push_str(&format!("&application={}", enc(&a)));
-    }
-    if !f.from.is_empty() {
-        url.push_str(&format!("&from={}", enc(&f.from)));
-    }
-    if !f.to.is_empty() {
-        url.push_str(&format!("&to={}", enc(&f.to)));
-    }
-    if !f.search.is_empty() {
-        url.push_str(&format!("&q={}", enc(&f.search)));
-    }
-    if let Some(tag) = f.tag.filter(|s| !s.is_empty()) {
-        url.push_str(&format!("&tag={}", enc(&tag)));
-    }
-    if let Some(exportada) = f.exported {
-        url.push_str(&format!("&exported={exportada}"));
-    }
-    Request::get(&url)
+/// Entradas que cumplen los filtros (resumen, con fragmento).
+///
+/// El limite se pone aqui y no en los filtros de la vista, para que no salga en
+/// la URL del navegador: es un detalle de la peticion, no parte de la busqueda
+/// que el usuario comparte.
+pub async fn fetch_entries(q: &EntryQuery) -> Result<EntryPage, String> {
+    let mut q = q.clone();
+    q.limit = Some(200);
+    Request::get(&format!("/api/v1/entries?{}", query_de(&q)))
         .send()
         .await
         .map_err(|e| e.to_string())?
         .json()
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Entradas enteras que cumplen los filtros, en orden ascendente.
+///
+/// Mismos filtros que el listado, otra ruta. El servidor responde 400 cuando la
+/// busqueda se pasa de tamano: ese mensaje se devuelve tal cual, porque dice
+/// por donde acotar.
+pub async fn fetch_hilo(q: &EntryQuery) -> Result<Vec<Entry>, String> {
+    let resp = Request::get(&format!("/api/v1/hilo?{}", query_de(q)))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        let detalle: serde_json::Value = resp.json().await.unwrap_or_default();
+        return Err(detalle["error"]
+            .as_str()
+            .unwrap_or("no se pudo cargar el hilo")
+            .to_string());
+    }
+    resp.json().await.map_err(|e| e.to_string())
 }
 
 pub async fn fetch_entry(id: i64) -> Result<Entry, String> {

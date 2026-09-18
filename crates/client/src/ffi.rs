@@ -73,6 +73,41 @@ pub fn current_path() -> String {
         .unwrap_or_else(|| "/".to_string())
 }
 
+/// Query string actual, con el `?` incluido (vacia si no hay).
+///
+/// Es la otra mitad del deep link: la ruta dice que vista es y la query dice
+/// que filtros tenia. Juntas hacen la busqueda reproducible.
+pub fn current_search() -> String {
+    web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default()
+}
+
+/// true si el navegador ofrece el portapapeles asincrono.
+///
+/// `navigator.clipboard` solo existe en contexto seguro. localhost cuenta como
+/// seguro, que es el caso normal aqui, pero abrir el diario por IP desde otra
+/// maquina en http no. Se comprueba antes de usarlo para poder ofrecer otra
+/// salida en vez de que el boton no haga nada.
+pub fn hay_portapapeles() -> bool {
+    web_sys::window()
+        .and_then(|w| js_sys::Reflect::get(&w.navigator(), &JsValue::from_str("clipboard")).ok())
+        .map(|c| !c.is_undefined() && !c.is_null())
+        .unwrap_or(false)
+}
+
+/// Copia texto al portapapeles y avisa de si pudo. Requiere hay_portapapeles().
+pub fn copiar_al_portapapeles<F: Fn(bool) + 'static>(texto: &str, avisar: F) {
+    let Some(w) = web_sys::window() else {
+        avisar(false);
+        return;
+    };
+    let promesa = w.navigator().clipboard().write_text(texto);
+    wasm_bindgen_futures::spawn_local(async move {
+        avisar(wasm_bindgen_futures::JsFuture::from(promesa).await.is_ok());
+    });
+}
+
 /// Cambia la URL sin recargar (history.pushState).
 pub fn push_path(path: &str) {
     if let Some(w) = web_sys::window() {
