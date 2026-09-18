@@ -764,6 +764,44 @@ exportador no ha escrito. En régimen normal debería estar vacío.
 
 ---
 
+### Volcar lo pendiente: al arrancar, al cerrar y a mano
+
+**Al arrancar** el servidor hace una pasada antes de atender nada, así que recupera solo lo
+que quedara atrasado de la vez anterior.
+
+**Al cerrar** hace una última pasada, pero **solo si recibe la señal**. Escucha Ctrl-C y,
+en Windows, el cierre de consola, el apagado y el cierre de sesión.
+
+> **Con una tarea programada esa señal no llega.** Medido: se deja una entrada pendiente,
+> se ejecuta `Stop-ScheduledTask` y el fichero **no** se escribe — el proceso muere sin
+> recibir el evento. En cambio, arrancando el servidor en una terminal y cerrándolo de
+> verdad, el log muestra `cierre solicitado` y la pasada final se ejecuta.
+
+**A mano**, con el botón **Exportar pendientes** de la barra lateral, que dice cuántas
+escribió y cuántas quedan sin destino. Es la vía fiable cuando el servidor corre oculto, y
+por eso existe: no como comodidad, sino porque el cierre ordenado no siempre puede correr.
+
+También por API:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/v1/exportar \
+  -H 'Authorization: Bearer dk_tu_token'
+```
+
+```json
+{ "escritas": 3, "pendientes": 0, "por_aplicacion": [] }
+```
+
+Exige API key igual que marcar el estado, y por lo mismo: escribe ficheros en repositorios
+del disco. Con `--marcado-abierto` queda accesible desde la web sin clave.
+
+Conviene tener presente que **nada de esto evita una pérdida**, porque no hay ninguna:
+como una entrada no se marca exportada hasta que se ha escrito, lo que quede pendiente al
+morir el proceso lo recupera la pasada de arranque. El cierre ordenado y el botón ahorran
+esperar al siguiente arranque.
+
+---
+
 ## Modo log
 
 ```powershell

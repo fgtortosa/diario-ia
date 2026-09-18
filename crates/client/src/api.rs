@@ -9,6 +9,22 @@ fn enc(s: &str) -> String {
         .unwrap_or_default()
 }
 
+/// Fuerza una pasada del exportador. Devuelve (escritas, pendientes).
+pub async fn exportar_ahora() -> Result<(i64, i64), String> {
+    let resp = Request::post("/api/v1/exportar")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.ok() {
+        return Err(format!("el servidor respondio {}", resp.status()));
+    }
+    let v: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    Ok((
+        v["escritas"].as_i64().unwrap_or(0),
+        v["pendientes"].as_i64().unwrap_or(0),
+    ))
+}
+
 pub async fn fetch_tags() -> Result<Vec<TagCount>, String> {
     Request::get("/api/v1/tags")
         .send()

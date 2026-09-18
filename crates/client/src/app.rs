@@ -139,6 +139,7 @@ fn Sidebar(
     tags: RwSignal<Vec<TagCount>>,
     solo_pendientes: RwSignal<bool>,
 ) -> impl IntoView {
+    let estado_export = RwSignal::new(String::new());
     view! {
         <aside class="sidebar">
             <h2>"Aplicaciones"</h2>
@@ -221,7 +222,35 @@ fn Sidebar(
                 </label>
                 <button
                     class="btn-clear"
+                    title="Escribe ahora los markdown que aun no se han volcado a los repositorios"
                     on:click=move |_| {
+                        estado_export.set("Exportando…".to_string());
+                        spawn_local(async move {
+                            match api::exportar_ahora().await {
+                                Ok((escritas, pendientes)) => estado_export.set(
+                                    if pendientes > 0 {
+                                        format!("{escritas} escrita(s), {pendientes} sin destino")
+                                    } else if escritas > 0 {
+                                        format!("{escritas} escrita(s)")
+                                    } else {
+                                        "No quedaba nada".to_string()
+                                    },
+                                ),
+                                Err(e) => estado_export.set(format!("Error: {e}")),
+                            }
+                        });
+                    }
+                >
+                    "Exportar pendientes"
+                </button>
+                {move || {
+                    let m = estado_export.get();
+                    (!m.is_empty()).then(|| view! { <p class="estado-export">{m}</p> })
+                }}
+                <button
+                    class="btn-clear"
+                    on:click=move |_| {
+                        estado_export.set(String::new());
                         selected_app.set(None);
                         from.set(String::new());
                         to.set(String::new());

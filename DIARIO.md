@@ -423,3 +423,42 @@ cambió a marcar *como exportada*, que es la dirección en la que el cambio se n
 
 En marcha: con la opción encendida, el `PUT` sin clave responde 200 y crear entradas sigue
 respondiendo 401. La tarea programada la lleva encendida porque escucha en 127.0.0.1.
+
+---
+
+## 2026-09-18 07:55 — Volcar lo pendiente al arrancar, al cerrar y a mano
+
+**Al arrancar ya funcionaba**: la primera vuelta del bucle del exportador corre antes del
+primer `notified().await`. No hizo falta tocarlo, y se comprobó en el log al arrancar un
+servidor con una entrada pendiente: `exportadas 1 entradas al repositorio`.
+
+**Al cerrar** se añade `with_graceful_shutdown`, escuchando Ctrl-C y, en Windows, cierre de
+consola, apagado y cierre de sesión; después una pasada final.
+
+**A mano**, botón *Exportar pendientes* en la barra lateral, contra un
+`POST /api/v1/exportar` que devuelve cuántas escribió y cuántas quedan.
+
+**Lo que había que medir, y se midió**
+
+El cierre ordenado **no sirve con la tarea programada**. Prueba: se deja una entrada
+pendiente apuntando el repositorio a una ruta rota, se repara el destino sin avisar al
+servidor, y se ejecuta `Stop-ScheduledTask`. El fichero **no** aparece: el proceso muere
+sin recibir el evento.
+
+En cambio, con una señal real —`taskkill` sin `/F` sobre un servidor arrancado a mano— el
+log muestra `cierre solicitado: dejando de aceptar peticiones` seguido de la pasada final.
+
+Por eso el botón no es una comodidad por no ver la consola: es **la vía fiable** en la
+configuración habitual, y el cierre ordenado es el añadido que funciona cuando el sistema
+lo permite.
+
+**Lo que conviene no olvidar**
+
+Nada de esto evita una pérdida, porque no la hay: como una entrada no se marca exportada
+hasta haberse escrito, lo pendiente al morir el proceso lo recupera la pasada de arranque.
+Esto ahorra esperar al reinicio.
+
+**Verificación**
+
+50 tests. Y en el navegador: con una entrada pendiente de verdad, pulsar el botón muestra
+«1 escrita(s)» y la cola pasa de 1 a 0, sin errores de consola.

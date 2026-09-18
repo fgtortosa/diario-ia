@@ -39,10 +39,17 @@ pub fn router(state: AppState) -> Router {
     // El boton de la web necesita que este abierto, asi que hay una opcion
     // explicita para instancias locales. Apagada por defecto: que la interfaz
     // sea comoda no puede decidir donde esta el limite de permisos.
+    //
+    // Lo mismo vale para forzar una pasada de exportacion: escribe ficheros en
+    // repositorios del disco, asi que va por el mismo camino.
     if state.config.marcado_abierto {
-        read = read.route("/entries/{id}/exported", put(set_exported));
+        read = read
+            .route("/entries/{id}/exported", put(set_exported))
+            .route("/exportar", post(exportar_ahora));
     } else {
-        write = write.route("/entries/{id}/exported", put(set_exported));
+        write = write
+            .route("/entries/{id}/exported", put(set_exported))
+            .route("/exportar", post(exportar_ahora));
     }
 
     let read = read.route_layer(from_fn_with_state(state.clone(), require_viewer));
@@ -92,6 +99,43 @@ async fn set_exported(
     Ok(Json(
         serde_json::json!({ "id": id, "exported": cuerpo.exported }),
     ))
+}
+
+/// Fuerza una pasada del exportador y responde con el resultado.
+///
+/// Existe porque el servidor suele correr como tarea de Windows, oculto: su
+/// consola no la ve nadie, asi que no hay forma de saber si queda algo sin
+/// volcar ni de provocar el volcado sin reiniciar.
+async fn exportar_ahora(
+    State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
+) -> AppResult<Json<serde_json::Value>> {
+    let store = state.store.clone();
+    let dir = state.config.tareas_dir_efectivo().map(|s| s.to_string());
+    let escritas = blocking(move || {
+        crate::exporter::exportar_pendientes(&store, dir.as_deref())
+            .map_err(crate::error::AppError::Other)
+    })
+    .await?;
+
+    let store = state.store.clone();
+    let pendientes = blocking(move || store.contar_pendientes_por_aplicacion()).await?;
+    let quedan: i64 = pendientes.iter().map(|(_, n)| n).sum();
+
+    state.config.traza(
+        origen(&cabeceras),
+        "exportar_ahora",
+        &format!("escritas={escritas} quedan={quedan}"),
+    );
+
+    Ok(Json(serde_json::json!({
+        "escritas": escritas,
+        "pendientes": quedan,
+        "por_aplicacion": pendientes
+            .into_iter()
+            .map(|(a, n)| serde_json::json!({ "aplicacion": a, "pendientes": n }))
+            .collect::<Vec<_>>(),
+    })))
 }
 
 /// De donde viene la peticion, para el modo log. El puente MCP se identifica
