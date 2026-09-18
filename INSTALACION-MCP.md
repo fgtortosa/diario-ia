@@ -764,6 +764,53 @@ exportador no ha escrito. En régimen normal debería estar vacío.
 
 ---
 
+### La URL lleva la búsqueda
+
+Los filtros están en la dirección, y se sincronizan en los dos sentidos: al pulsar una
+aplicación, una etiqueta o una fecha la URL cambia; al abrir una URL con filtros, la
+barra lateral aparece ya puesta.
+
+```
+http://127.0.0.1:8787/?application=diario-ia&tag=rust
+http://127.0.0.1:8787/?from=2026-09-01&to=2026-09-18&q=build
+```
+
+Los nombres son **los mismos de la API**, a propósito: la query que ves en el navegador
+es la que vale para `curl`, sin traducir nada. El botón de atrás deshace filtro a filtro,
+y una entrada abierta (`/entry/27?tag=rust`) se lleva los filtros puestos, para que volver
+no los borre.
+
+### Ver en hilo
+
+**Ver en hilo** muestra en una sola página todo lo que cumple el filtro: las entradas
+enteras —prompt, resumen y respuesta—, de la más antigua a la más nueva. Es la misma
+consulta que el listado por otra ruta:
+
+```
+http://127.0.0.1:8787/hilo?application=redes-ice-netcore&tag=build
+```
+
+Para eso existe: acotas la búsqueda, y con **Copiar markdown** te llevas el bloque entero
+para pegárselo a un agente y pedirle algo sobre esa historia. Cada entrada se arma con
+`markdown_de`, la misma función que escribe los ficheros de los repositorios, así que lo
+que copias y lo que hay en disco son el mismo texto.
+
+| Botón | Qué hace |
+|---|---|
+| **Copiar markdown** | El hilo entero al portapapeles, con una cabecera que dice de qué búsqueda salió |
+| **Descargar .md** | Lo mismo como fichero `hilo-<ámbito>-<fecha>.md` |
+| **PDF** | El diálogo de impresión, con la misma hoja `@media print` del detalle |
+
+El portapapeles del navegador **solo existe en contexto seguro**: `localhost` cuenta, pero
+abrir el diario por IP en `http` desde otra máquina no. En ese caso el botón no se queda
+mudo: descarga el fichero y lo dice.
+
+> **El hilo se corta en 200 entradas** y devuelve un error en vez de recortar la lista.
+> Un hilo truncado en silencio le daría al agente media historia sin que nadie se entere;
+> el mensaje dice por dónde acotar.
+
+---
+
 ### Volcar lo pendiente: al arrancar, al cerrar y a mano
 
 **Al arrancar** el servidor hace una pasada antes de atender nada, así que recupera solo lo

@@ -462,3 +462,59 @@ Esto ahorra esperar al reinicio.
 
 50 tests. Y en el navegador: con una entrada pendiente de verdad, pulsar el botón muestra
 «1 escrita(s)» y la cola pasa de 1 a 0, sin errores de consola.
+
+---
+
+## 2026-09-18 09:00 — URLs navegables y vista en hilo
+
+Los filtros pasan a la query de la URL, en los dos sentidos, y se añade `/hilo`: la misma
+búsqueda mostrada entera en una sola página, para copiársela a un agente.
+
+**Decisiones**
+
+- **Los nombres de los parámetros son los de la API**, no unos propios en castellano. La
+  query que ves en el navegador es la que vale para `curl`: `/hilo?application=x&tag=y` y
+  `/api/v1/hilo?application=x&tag=y` llevan la misma cadena, y no hay tabla de traducción
+  que pueda desincronizarse.
+- **`query_de`/`query_a` viven en `shared`.** `crates/client` solo se compila a wasm, así
+  que un test ahí no correría con `cargo test`; y con una sola definición la URL del
+  navegador y la de la API se construyen igual **por construcción**, como `markdown_de`
+  hace con el fichero exportado. La librería es `serde_urlencoded`, que ya estaba en el
+  lock porque la arrastra axum: es la misma con la que el servidor lee la query.
+- **No se apila nada si la URL ya dice lo mismo.** De eso depende que el botón de atrás
+  funcione: al volver, `popstate` repone los filtros, el `Effect` recalcula esa misma URL
+  y no empuja una entrada encima de la que se acaba de dejar.
+- **La URL del detalle arrastra los filtros aunque no los use.** Sin eso, volver con el
+  botón de atrás desde una entrada los borraba, porque `popstate` los lee de la query y
+  `/entry/27` no lleva ninguna.
+- **El hilo va en orden ascendente y sin recortar nada**: es una historia, y se lee de
+  principio a fin. El prompt va desplegado y no dentro de un `<details>` como en el
+  detalle, porque el hilo se lee y se copia de un tirón.
+- **Tope de 200 entradas, con error en vez de truncado.** El hilo devuelve las entradas
+  enteras, no el fragmento del listado, así que sin tope `/api/v1/hilo` sin filtros se
+  traía el diario completo a memoria —y es ruta de lectura, con `require_viewer` inactivo
+  mientras no exista `DIARIO_VIEWER_TOKEN`—. Cortar en silencio sería peor que el error:
+  le daría al agente media historia sin que nadie se entere.
+- **Si no hay portapapeles, el botón descarga el fichero.** `navigator.clipboard` solo
+  existe en contexto seguro: `localhost` sí, por IP en `http` no. Se comprueba antes y se
+  dice lo que pasó, en vez de que el botón no haga nada.
+
+**Verificación**
+
+54 tests, `just clippy` en verde y comprobación en el navegador con Playwright contra la
+base real, con 0 errores de consola:
+
+| Qué | Resultado |
+|---|---|
+| Filtros a la URL | Pulsar aplicación y etiqueta deja `/?application=diario-ia&tag=rust` |
+| Atrás | Deshace filtro a filtro: quita la etiqueta (12 tarjetas) y luego la aplicación |
+| Enlace directo | `/hilo?application=redes-ice-netcore&from=2026-09-01&q=build` repone barra lateral, fecha y buscador, y muestra 1 entrada |
+| Hilo | 2 entradas completas, ascendentes, con el prompt visible |
+| Copiar markdown | 5.505 caracteres en el portapapeles, cabecera correcta, 1 separador y 6 secciones |
+| Detalle | `/entry/27?tag=rust` conserva el filtro al volver y al pulsar atrás |
+
+**De paso**
+
+`just clippy` estaba rojo desde el PR anterior por dos avisos del exportador (un import y
+un método que en producción ya no llama nadie). Corregidos: la puerta de lint del
+repositorio vuelve a pasar.

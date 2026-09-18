@@ -134,7 +134,20 @@ curl -X POST http://servidor:8787/api/v1/entries \
 | GET    | `/api/v1/applications`        | Aplicaciones con contadores                  |
 | GET    | `/api/v1/entries`             | Lista filtrable: `application,from,to,tag,q,limit,cursor` |
 | GET    | `/api/v1/entries/{id}`        | Entrada completa (markdown + html + adjuntos)|
+| GET    | `/api/v1/hilo`                | Entradas **enteras** que cumplen el filtro, en orden ascendente (máx. 200) |
+| GET    | `/api/v1/tags`                | Etiquetas con cuántas entradas lleva cada una |
 | GET    | `/api/v1/stats`               | Recuentos por día (heatmap)                  |
+| PUT    | `/api/v1/entries/{id}/exported` | Marca o desmarca el estado de exportación (auth) |
+| POST   | `/api/v1/exportar`            | Fuerza una pasada del exportador (auth)      |
+
+`/hilo` acepta los mismos filtros que `/entries` y es lo que hay detrás de la vista en
+hilo de la web: sirve para pasarle a un agente todo lo de una aplicación de una vez.
+Las dos rutas marcadas *(auth)* escriben ficheros en repositorios del disco; con
+`--marcado-abierto` quedan accesibles sin clave, pensado para instancias locales.
+
+La web guarda los filtros en la URL con **esos mismos nombres**, así que lo que ves en la
+barra de direcciones vale para `curl` sin traducir nada:
+`http://localhost:8787/hilo?application=diario-ia&tag=rust`.
 
 ## Compilación multiplataforma (sin runtime)
 
