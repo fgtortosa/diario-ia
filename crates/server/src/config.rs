@@ -18,6 +18,22 @@ pub struct ServerConfig {
     /// Es configurable porque la ruta habitual es de la maquina de desarrollo:
     /// un servidor desplegado en otro host no la tiene.
     pub tareas_dir: Option<String>,
+    /// Modo log de operaciones (DIARIO_LOG_OPS): traza por consola cada
+    /// operacion del diario, venga de REST o del MCP.
+    pub log_ops: bool,
+    /// Permite marcar el estado de exportacion sin API key
+    /// (DIARIO_MARCADO_ABIERTO). **Apagado por defecto.**
+    ///
+    /// Marcar no es una operacion inocua: desmarcar hace que el servidor
+    /// escriba ficheros en repositorios del disco, y marcar suprime para
+    /// siempre la exportacion de esa entrada. Con la lectura abierta por
+    /// defecto y el bind en 0.0.0.0, dejarlo accesible sin credencial
+    /// significaria que cualquiera en la red puede provocar escrituras en disco
+    /// y perdida silenciosa de registros.
+    ///
+    /// Se enciende a conciencia en una instancia local, que es donde el boton
+    /// de la web tiene sentido.
+    pub marcado_abierto: bool,
 }
 
 impl ServerConfig {
@@ -27,6 +43,20 @@ impl ServerConfig {
 
     /// Trata la cadena vacia como ausencia, para que DIARIO_TAREAS_DIR="" sirva
     /// para desactivar el destino central sin borrar la variable.
+    /// Traza una operacion si el modo log esta activo.
+    ///
+    /// Va aqui y no repartido por los handlers para que el formato sea uno solo
+    /// y para que activarlo o desactivarlo sea un unico sitio.
+    ///
+    /// Nunca se traza el prompt ni la respuesta: son largos y son justo lo que
+    /// no quieres volcado en una consola compartida. Solo lo minimo para saber
+    /// que paso y sobre que.
+    pub fn traza(&self, origen: &str, operacion: &str, detalle: &str) {
+        if self.log_ops {
+            tracing::info!("[{origen}] {operacion} {detalle}");
+        }
+    }
+
     pub fn tareas_dir_efectivo(&self) -> Option<&str> {
         self.tareas_dir.as_deref().filter(|t| !t.is_empty())
     }
@@ -43,7 +73,19 @@ mod tests {
             public_url: "http://localhost:8787".into(),
             viewer_token: None,
             tareas_dir: tareas.map(|s| s.to_string()),
+            log_ops: false,
+            marcado_abierto: false,
         }
+    }
+
+    #[test]
+    fn con_el_modo_log_apagado_no_se_traza() {
+        // No se puede observar la ausencia de un log sin capturar el subscriber,
+        // asi que lo que se comprueba es el contrato: la bandera manda y llamar
+        // a traza con el modo apagado no hace nada ni falla.
+        let c = config_con(None);
+        assert!(!c.log_ops);
+        c.traza("rest", "crear_entrada", "id=1");
     }
 
     #[test]

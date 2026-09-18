@@ -323,3 +323,103 @@ etiquetas se pintaban como texto muerto y no había forma de filtrar por ellas d
   `#gitignore ×` en la cabecera; la × lo quita y vuelven las 23. Lo importante es que la
   URL sigue siendo `/` tras pulsar la etiqueta: el `stop_propagation` funciona y no navega
   al detalle. Sin errores de consola.
+
+---
+
+## 2026-09-17 23:26 — Exportación manual, marcado, etiquetas y modo log
+
+Cuatro bloques sobre lo construido esta misma tarde: descargar una entrada en md y en PDF,
+ver y cambiar su estado de exportación, filtrar por etiqueta desde una lista con recuentos,
+y seguir por consola cada operación.
+
+**Decisiones**
+
+- **PDF con `window.print()` y hoja `@media print`, no con una librería.** Meter un
+  generador significaría maquetar a mano lo que el navegador ya sabe hacer, o empaquetar un
+  Chrome headless en un ejecutable que hoy son 10 MB y presume de no tener dependencias de
+  sistema. Lo que sí hacía falta era una hoja de impresión de verdad.
+- **`markdown_de` se mueve de `exporter.rs` a `shared`.** Es lo importante del bloque de
+  descarga: lo usan el exportador y la web, así que con una sola definición el fichero que
+  te bajas y el que se exporta son idénticos **por construcción**, no por coincidencia.
+- **La descarga se hace en el cliente con un `Blob`**, sin ruta nueva: el detalle ya tiene
+  el markdown, y un endpoint duplicaría lo que ya viajó.
+- **La hora de los nombres pasa de UTC a local.** Era el punto que quedaba abierto. Dentro
+  de un día el desfase es constante, así que el orden alfabético sigue siendo el
+  cronológico.
+- **Marcar el estado va con la lectura y no con la escritura.** No crea ni modifica
+  contenido, solo cambia una marca de control: quien puede leer el diario entero, con sus
+  prompts, puede cambiar una bandera. Ponerlo bajo la API key dejaba el botón inservible
+  desde la web.
+- **El modo log nunca traza el prompt ni la respuesta**, que es justo lo que no quieres
+  volcado en una consola.
+- **`traza()` vive en `ServerConfig`** y no repartida por los handlers, para que el formato
+  sea uno solo y activarlo sea un único sitio.
+
+**Dos cosas que solo aparecieron al probarlas**
+
+- **El botón de marcar daba 401 desde el navegador.** Lo había puesto en el router de
+  escritura, que exige API key, y la web no tiene ninguna ni debe tenerla. Se vio en la
+  consola del navegador al probar el ciclo completo con Playwright, no compilando. Queda un
+  test de regresión que crea una key y comprueba que la marca sigue funcionando sin ella.
+- **`parse_dt` solo aceptaba RFC3339**, pero la migración 0002 marcó las entradas antiguas
+  con `datetime('now')` de SQLite. Sin arreglarlo, esas entradas aparecían como *no
+  exportadas* en la interfaz, que es exactamente lo contrario de lo que son.
+
+**Verificación**
+
+47 tests. Y en el navegador, con Playwright: la lista de etiquetas filtra (26 → 1); el
+conmutador de pendientes responde; descargar produce
+`20260917-213731-diario-ia-26.md`; y marcar y desmarcar cambia el indicador en los dos
+sentidos. Al desmarcar se vio el comportamiento diseñado: el exportador la recoge
+inmediatamente, respeta el fichero que ya existe y la vuelve a marcar.
+
+El modo log se comprobó con un servidor aparte, porque el que corre como tarea programada
+lo hace oculto y su consola no la ve nadie —cosa que queda advertida en la documentación—.
+Las cinco operaciones salieron trazadas, y la última como `[mcp]` al mandar la cabecera.
+
+**Matiz que conviene saber**
+
+Las entradas exportadas **antes** de este cambio tienen nombre en UTC en disco, mientras que
+el botón de descargar usa hora local. Para las entradas nuevas coinciden; para las viejas
+no. No se renombra nada: reescribir ficheros ya escritos es justo lo que el exportador
+evita por diseño.
+
+---
+
+## 2026-09-17 23:35 — Corregir el control de acceso del marcado
+
+La revisión de seguridad del commit señaló *broken access control* y *privilege escalation*
+en `api.rs`, y tenía razón.
+
+**Qué estaba mal**
+
+Había puesto `PUT /entries/{id}/exported` en el router de **lectura**, justificándolo con
+que «no crea ni modifica contenido, solo cambia una marca» y que «quien puede leer el
+diario entero puede cambiar una bandera». Las dos partes del argumento eran falsas:
+
+- **No es una marca inocua.** Desmarcar hace que el servidor escriba ficheros en
+  repositorios git del disco; marcar suprime para siempre la exportación de esa entrada.
+- **La comparación no se sostenía.** `require_viewer` no comprueba nada mientras no exista
+  `DIARIO_VIEWER_TOKEN`, y el bind por defecto es `0.0.0.0:8787`. Así que no era «quien
+  puede leer», era **cualquiera que alcance el puerto**, sin credencial, provocando
+  escrituras en disco y pérdida silenciosa de registros.
+
+Lo que pasó de verdad es que dejé que una restricción de interfaz —la web no tiene API
+key— decidiera dónde ponía el límite de permisos.
+
+**Arreglo**
+
+El endpoint vuelve a exigir API key, como cualquier escritura. Para que el botón siga
+sirviendo en una instancia local hay una opción **explícita y apagada por defecto**,
+`--marcado-abierto` / `DIARIO_MARCADO_ABIERTO`, que conviene encender solo junto a
+`--bind 127.0.0.1`.
+
+**Verificación**
+
+Dos tests, uno por caso: por defecto el `PUT` da 401 **y el cambio no se aplica**; con la
+opción encendida da 200 y sí se aplica. La primera versión del test afirmaba algo que no
+demostraba nada —comprobaba que la entrada seguía pendiente, y nacía pendiente—, así que se
+cambió a marcar *como exportada*, que es la dirección en la que el cambio se nota.
+
+En marcha: con la opción encendida, el `PUT` sin clave responde 200 y crear entradas sigue
+respondiendo 401. La tarea programada la lleva encendida porque escucha en 127.0.0.1.

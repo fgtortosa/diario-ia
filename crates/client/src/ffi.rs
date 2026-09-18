@@ -10,6 +10,62 @@ extern "C" {
     pub fn render_diagrams();
 }
 
+/// Descarga un texto como fichero, sin pasar por el servidor.
+///
+/// El detalle ya tiene el markdown de la entrada, asi que una ruta de descarga
+/// en el servidor solo duplicaria lo que ya viajo. Se hace con un Blob y un
+/// ancla temporal, que es la unica forma de disparar una descarga desde el
+/// navegador sin navegar fuera.
+pub fn descargar_fichero(nombre: &str, contenido: &str) {
+    let Some(documento) = web_sys::window().and_then(|w| w.document()) else {
+        return;
+    };
+    let partes = js_sys::Array::new();
+    partes.push(&JsValue::from_str(contenido));
+    let opciones = web_sys::BlobPropertyBag::new();
+    opciones.set_type("text/markdown;charset=utf-8");
+    let Ok(blob) = web_sys::Blob::new_with_str_sequence_and_options(&partes, &opciones) else {
+        return;
+    };
+    let Ok(url) = web_sys::Url::create_object_url_with_blob(&blob) else {
+        return;
+    };
+    if let Ok(a) = documento.create_element("a") {
+        let a: web_sys::HtmlAnchorElement = a.unchecked_into();
+        a.set_href(&url);
+        a.set_download(nombre);
+        a.click();
+    }
+    // Sin revoke el blob se queda en memoria hasta recargar la pagina.
+    let _ = web_sys::Url::revoke_object_url(&url);
+}
+
+/// Abre el dialogo de impresion del navegador, que es tambien el de "guardar
+/// como PDF". Ver la hoja @media print de styles.css.
+///
+/// Antes de imprimir despliega los <details> cerrados. Hace falta hacerlo aqui
+/// y no en CSS: el atributo `open` no se puede poner desde una hoja de estilos,
+/// y cambiar el `display` del <details> no revela su contenido. Medido en
+/// Chrome, un <details> cerrado en medio print tiene altura **cero**, asi que el
+/// prompt desaparecia entero del PDF en vez de salir desplegado.
+///
+/// Se dejan abiertos: quien imprime ha pedido el contenido, y volver a cerrarlos
+/// despues obligaria a adivinar cuando termina el dialogo del navegador.
+pub fn imprimir() {
+    let Some(w) = web_sys::window() else { return };
+    if let Some(doc) = w.document() {
+        if let Ok(lista) = doc.query_selector_all("details:not([open])") {
+            for i in 0..lista.length() {
+                if let Some(nodo) = lista.item(i) {
+                    let el: web_sys::Element = nodo.unchecked_into();
+                    let _ = el.set_attribute("open", "");
+                }
+            }
+        }
+    }
+    let _ = w.print();
+}
+
 /// Ruta actual del navegador (para deep links tipo /entry/42).
 pub fn current_path() -> String {
     web_sys::window()

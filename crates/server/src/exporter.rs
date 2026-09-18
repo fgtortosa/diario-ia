@@ -9,48 +9,9 @@
 //! pasada lo escribe.
 
 use crate::storage::Store;
-use diario_shared::Entry;
+use diario_shared::{markdown_de, nombre_fichero, Entry};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-
-/// `20260917-125851-redes-ice-netcore-19.md`
-///
-/// Fecha y hora primero para que el orden alfabetico sea el cronologico; la
-/// aplicacion para que el fichero se explique solo fuera de su carpeta; y el id
-/// porque varias entradas seguidas caen en el mismo segundo y sin el se pisan.
-pub fn nombre_fichero(entry: &Entry) -> String {
-    format!(
-        "{}-{}-{}.md",
-        entry.created_at.format("%Y%m%d-%H%M%S"),
-        entry.application_slug,
-        entry.id
-    )
-}
-
-/// El markdown que se escribe en el repositorio. El titulo va como H1 y el
-/// prompt literal, sin parafrasear, que es lo que le da valor al registro.
-pub fn markdown_de(entry: &Entry) -> String {
-    let mut s = String::new();
-    s.push_str(&format!("# {}\n\n", entry.title));
-    s.push_str(&format!("- Aplicacion: {}\n", entry.application_name));
-    s.push_str(&format!(
-        "- Agente: {} ({})\n",
-        entry.agent_name,
-        entry.model.as_deref().unwrap_or("-")
-    ));
-    s.push_str(&format!("- Fecha: {}\n", entry.created_at.to_rfc3339()));
-    s.push_str(&format!("- Entrada: {}\n", entry.id));
-    if !entry.tags.is_empty() {
-        s.push_str(&format!("- Etiquetas: {}\n", entry.tags.join(", ")));
-    }
-    s.push('\n');
-    s.push_str(&format!("## Prompt\n\n{}\n\n", entry.prompt));
-    if let Some(resumen) = &entry.task_summary {
-        s.push_str(&format!("## Resumen\n\n{}\n\n", resumen));
-    }
-    s.push_str(&format!("## Respuesta\n\n{}\n", entry.response_markdown));
-    s
-}
 
 /// Escribe todas las entradas pendientes y devuelve cuantas se marcaron.
 ///
@@ -192,6 +153,8 @@ mod tests {
             created_at: chrono::Utc
                 .with_ymd_and_hms(2026, 9, 17, 12, 58, 51)
                 .unwrap(),
+            exported_at: None,
+            export_filename: String::new(),
             attachments: vec![],
         }
     }
@@ -200,7 +163,16 @@ mod tests {
     fn el_nombre_lleva_fecha_hora_aplicacion_e_id() {
         assert_eq!(
             nombre_fichero(&entrada_de_prueba()),
-            "20260917-125851-redes-ice-netcore-19.md"
+            // En hora local: la entrada de prueba es 12:58:51 UTC, y el nombre
+            // depende de la zona de la maquina, asi que se compara contra el
+            // mismo calculo en vez de contra una cadena fija.
+            format!(
+                "{}-redes-ice-netcore-19.md",
+                entrada_de_prueba()
+                    .created_at
+                    .with_timezone(&chrono::Local)
+                    .format("%Y%m%d-%H%M%S")
+            )
         );
     }
 

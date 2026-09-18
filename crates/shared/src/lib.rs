@@ -3,7 +3,7 @@
 //! Todo lo que viaja por la API REST y por las herramientas MCP vive aqui,
 //! de modo que servidor y cliente comparten un unico modelo de datos.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Una aplicacion sobre la que trabajan los agentes (p.ej. "portal-alumnos").
@@ -98,6 +98,18 @@ pub struct Entry {
     pub duration_ms: Option<i64>,
     pub metadata: Option<serde_json::Value>,
     pub created_at: DateTime<Utc>,
+    /// Cuando se escribio en los repositorios. None = pendiente de exportar.
+    #[serde(default)]
+    pub exported_at: Option<DateTime<Utc>>,
+    /// Nombre del fichero con el que se exporta esta entrada, **calculado en el
+    /// servidor**.
+    ///
+    /// Viaja en la respuesta en vez de calcularse en el navegador porque el
+    /// nombre lleva la hora local: si el navegador y el servidor estan en zonas
+    /// distintas, calcularlo en los dos sitios da nombres distintos y se rompe
+    /// la garantia de que descargar a mano y exportar produzcan lo mismo.
+    #[serde(default)]
+    pub export_filename: String,
     pub attachments: Vec<Attachment>,
 }
 
@@ -125,6 +137,10 @@ pub struct EntryQuery {
     /// Cursor de paginacion: id maximo devuelto en la pagina anterior.
     #[serde(default)]
     pub cursor: Option<i64>,
+    /// Estado de exportacion: Some(true) solo exportadas, Some(false) solo
+    /// pendientes, None todas.
+    #[serde(default)]
+    pub exported: Option<bool>,
 }
 
 /// Pagina de resultados de entradas.
@@ -132,6 +148,13 @@ pub struct EntryQuery {
 pub struct EntryPage {
     pub entries: Vec<EntrySummary>,
     pub next_cursor: Option<i64>,
+}
+
+/// Recuento de entradas por etiqueta, para la lista lateral.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TagCount {
+    pub tag: String,
+    pub count: i64,
 }
 
 /// Recuento de entradas por dia, para el heatmap/calendario.
@@ -146,4 +169,50 @@ pub struct DayCount {
 pub struct CreatedEntry {
     pub id: i64,
     pub url: String,
+}
+
+/// El markdown de una entrada.
+///
+/// Vive aqui y no en el servidor porque lo usan los dos lados: el exportador
+/// para escribir el fichero del repositorio, y la web para el boton de
+/// descargar. Con una sola definicion, lo que te bajas y lo que se exporta son
+/// identicos por construccion y no por coincidencia.
+pub fn markdown_de(entry: &Entry) -> String {
+    let mut s = String::new();
+    s.push_str(&format!("# {}\n\n", entry.title));
+    s.push_str(&format!("- Aplicacion: {}\n", entry.application_name));
+    s.push_str(&format!(
+        "- Agente: {} ({})\n",
+        entry.agent_name,
+        entry.model.as_deref().unwrap_or("-")
+    ));
+    s.push_str(&format!("- Fecha: {}\n", entry.created_at.to_rfc3339()));
+    s.push_str(&format!("- Entrada: {}\n", entry.id));
+    if !entry.tags.is_empty() {
+        s.push_str(&format!("- Etiquetas: {}\n", entry.tags.join(", ")));
+    }
+    s.push('\n');
+    s.push_str(&format!("## Prompt\n\n{}\n\n", entry.prompt));
+    if let Some(resumen) = &entry.task_summary {
+        s.push_str(&format!("## Resumen\n\n{}\n\n", resumen));
+    }
+    s.push_str(&format!("## Respuesta\n\n{}\n", entry.response_markdown));
+    s
+}
+
+/// `20260917-125851-redes-ice-netcore-19.md`
+///
+/// Fecha y hora primero para que el orden alfabetico sea el cronologico; la
+/// aplicacion para que el fichero se explique solo fuera de su carpeta; y el id
+/// porque varias entradas seguidas caen en el mismo segundo y sin el se pisan.
+pub fn nombre_fichero(entry: &Entry) -> String {
+    format!(
+        "{}-{}-{}.md",
+        entry
+            .created_at
+            .with_timezone(&Local)
+            .format("%Y%m%d-%H%M%S"),
+        entry.application_slug,
+        entry.id
+    )
 }

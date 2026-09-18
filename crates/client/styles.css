@@ -142,3 +142,59 @@ details.prompt summary { cursor: pointer; color: var(--muted); font-size: 13px; 
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
 }
+
+/* Estilos de las acciones del detalle. */
+.acciones { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.btn { font-size: 13px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 6px;
+       background: var(--panel); color: var(--text); font-family: inherit; cursor: pointer; }
+.btn:hover { background: var(--accent-soft); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.estado-export { font-size: 12px; color: var(--muted); margin-left: 4px; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted);
+         cursor: pointer; margin-top: 8px; }
+
+/* ---------------------------------------------------------------------------
+   Impresion y "guardar como PDF".
+
+   El boton PDF llama a window.print(): no hay generador de PDF en el binario.
+   Meter uno significaria o maquetar a mano lo que el navegador ya sabe hacer, o
+   empaquetar un Chrome headless en un ejecutable que hoy son 10 MB y presume de
+   no tener dependencias de sistema. Lo que si hace falta es que lo impreso sea
+   el contenido y no la aplicacion: fuera cabecera, barra lateral y botones.
+   --------------------------------------------------------------------------- */
+@media print {
+  .header, .sidebar, .acciones, .back, .btn-clear { display: none !important; }
+
+  body, .app, .main, .detail {
+    display: block !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    box-shadow: none !important;
+  }
+
+  .card, .section, .prompt-box, .summary-box, .markdown {
+    box-shadow: none !important;
+    border-color: #ccc !important;
+    background: #fff !important;
+  }
+
+  /* El prompt va dentro de un <details>. Desplegarlo NO se puede hacer desde
+     aqui: el atributo open no se pone con CSS, y cambiar el display del
+     <details> no revela su contenido -medido en Chrome, un <details> cerrado en
+     medio print tiene altura cero-. Lo despliega imprimir() en ffi.rs antes de
+     llamar a window.print(); aqui solo se quita el triangulo del resumen, que
+     ya no sirve de nada en papel. */
+  details > summary { list-style: none; }
+  details > summary::marker, details > summary::-webkit-details-marker { display: none; }
+
+  /* No partir por la mitad lo que se lee como una unidad. */
+  pre, code, blockquote, table, .card { break-inside: avoid; page-break-inside: avoid; }
+  h1, h2, h3 { break-after: avoid; page-break-after: avoid; }
+
+  /* Los enlaces impresos no sirven de nada sin su destino. */
+  .markdown a::after { content: " (" attr(href) ")"; font-size: 11px; color: #555; }
+
+  a { color: #000 !important; text-decoration: underline; }
+}
