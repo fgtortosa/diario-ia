@@ -112,9 +112,11 @@ async fn list_tags(
 ) -> AppResult<Json<Vec<TagCount>>> {
     let store = state.store.clone();
     let tags = blocking(move || store.contar_etiquetas()).await?;
-    state
-        .config
-        .traza(origen(&cabeceras), "listar_etiquetas", &format!("n={}", tags.len()));
+    state.config.traza(
+        origen(&cabeceras),
+        "listar_etiquetas",
+        &format!("n={}", tags.len()),
+    );
     Ok(Json(tags))
 }
 
@@ -124,9 +126,11 @@ async fn list_applications(
 ) -> AppResult<Json<Vec<Application>>> {
     let store = state.store.clone();
     let apps = blocking(move || store.list_applications()).await?;
-    state
-        .config
-        .traza(origen(&cabeceras), "listar_aplicaciones", &format!("n={}", apps.len()));
+    state.config.traza(
+        origen(&cabeceras),
+        "listar_aplicaciones",
+        &format!("n={}", apps.len()),
+    );
     Ok(Json(apps))
 }
 

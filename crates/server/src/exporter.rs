@@ -13,7 +13,6 @@ use diario_shared::{markdown_de, nombre_fichero, Entry};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-
 /// Escribe todas las entradas pendientes y devuelve cuantas se marcaron.
 ///
 /// Procesa todas y no solo la recien creada a proposito: si el servidor estuvo
@@ -22,6 +21,7 @@ use std::path::{Path, PathBuf};
 pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::Result<usize> {
     let mut marcadas = 0usize;
     let mut despues_de = None;
+    let mut sin_destino = 0usize;
 
     loop {
         let pendientes = store.entradas_pendientes_despues(200, despues_de)?;
@@ -42,6 +42,19 @@ pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::R
             let nombre = nombre_fichero(&entrada);
             let cuerpo = markdown_de(&entrada);
 
+            // Sin ningun destino la entrada se queda pendiente a proposito: asi se
+            // recupera si mas tarde se registra el repositorio. Pero sin avisar seria
+            // silencioso, y con la configuracion por defecto -sin --tareas-dir y sin
+            // repo set- se acumularia todo sin escribir nada y sin que nadie lo note.
+            //
+            // Se cuenta y se avisa UNA vez al terminar la pasada, no una por
+            // entrada: cada entrada nueva dispara una pasada que recorre todas
+            // las pendientes, asi que avisar por entrada hace que el volumen de
+            // log crezca con el cuadrado del historico.
+            if destinos.is_empty() {
+                sin_destino += 1;
+            }
+
             let mut todos_ok = !destinos.is_empty();
             for dir in &destinos {
                 if let Err(e) = escribir_si_no_existe(dir, &nombre, &cuerpo) {
@@ -61,6 +74,12 @@ pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::R
                 marcadas += 1;
             }
         }
+    }
+
+    if sin_destino > 0 {
+        tracing::warn!(
+            "{sin_destino} entrada(s) sin donde exportarse: sus aplicaciones no tienen repositorio registrado (diario repo set) y no hay directorio central (DIARIO_TAREAS_DIR). Quedan pendientes."
+        );
     }
 
     Ok(marcadas)
@@ -310,6 +329,30 @@ mod tests {
             201
         );
         assert!(store.entradas_pendientes(1).unwrap().is_empty());
+    }
+
+    #[test]
+    fn sin_ningun_destino_sigue_pendiente_y_se_recupera_al_registrar() {
+        // Sin directorio central y sin repo_path. Que siga pendiente es lo
+        // correcto, no un fallo: es lo que permite que al registrar el
+        // repositorio mas tarde se arrastre su historico. Marcarla sin haberla
+        // escrito en ningun sitio la perderia para siempre.
+        let store = Store::in_memory().unwrap();
+        store
+            .create_entry(&nueva("sin-destinos", "Titulo"), chrono::Utc::now())
+            .unwrap();
+
+        assert_eq!(exportar_pendientes(&store, None).unwrap(), 0);
+        assert_eq!(store.entradas_pendientes(10).unwrap().len(), 1);
+
+        let repo = tempfile::tempdir().unwrap();
+        store
+            .set_repo_path("sin-destinos", Some(repo.path().to_str().unwrap()))
+            .unwrap();
+
+        assert_eq!(exportar_pendientes(&store, None).unwrap(), 1);
+        assert_eq!(cuantos(&repo.path().join("diario-ia")), 1);
+        assert!(store.entradas_pendientes(10).unwrap().is_empty());
     }
 
     #[test]

@@ -858,7 +858,9 @@ mod tests {
         // hora local, y calcularlo tambien en el navegador daria otro nombre si
         // las zonas no coinciden.
         let store = Store::in_memory().unwrap();
-        let id = store.create_entry(&sample_entry("mi-app", "Una"), Utc::now()).unwrap();
+        let id = store
+            .create_entry(&sample_entry("mi-app", "Una"), Utc::now())
+            .unwrap();
 
         let entry = store.get_entry(id).unwrap().unwrap();
 
