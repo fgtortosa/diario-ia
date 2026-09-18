@@ -9,27 +9,10 @@
 //! pasada lo escribe.
 
 use crate::storage::Store;
-use chrono::Local;
-use diario_shared::{markdown_de, Entry};
+use diario_shared::{markdown_de, nombre_fichero, Entry};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// `20260917-125851-redes-ice-netcore-19.md`
-///
-/// Fecha y hora primero para que el orden alfabetico sea el cronologico; la
-/// aplicacion para que el fichero se explique solo fuera de su carpeta; y el id
-/// porque varias entradas seguidas caen en el mismo segundo y sin el se pisan.
-pub fn nombre_fichero(entry: &Entry) -> String {
-    format!(
-        "{}-{}-{}.md",
-        entry
-            .created_at
-            .with_timezone(&Local)
-            .format("%Y%m%d-%H%M%S"),
-        entry.application_slug,
-        entry.id
-    )
-}
 
 /// Escribe todas las entradas pendientes y devuelve cuantas se marcaron.
 ///
@@ -152,6 +135,7 @@ mod tests {
                 .with_ymd_and_hms(2026, 9, 17, 12, 58, 51)
                 .unwrap(),
             exported_at: None,
+            export_filename: String::new(),
             attachments: vec![],
         }
     }

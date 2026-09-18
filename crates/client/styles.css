@@ -180,9 +180,14 @@ details.prompt summary { cursor: pointer; color: var(--muted); font-size: 13px; 
     background: #fff !important;
   }
 
-  /* El prompt va dentro de un <details>: al imprimir interesa verlo entero. */
-  details, details[open] { display: block !important; }
-  details > summary { display: none !important; }
+  /* El prompt va dentro de un <details>. Desplegarlo NO se puede hacer desde
+     aqui: el atributo open no se pone con CSS, y cambiar el display del
+     <details> no revela su contenido -medido en Chrome, un <details> cerrado en
+     medio print tiene altura cero-. Lo despliega imprimir() en ffi.rs antes de
+     llamar a window.print(); aqui solo se quita el triangulo del resumen, que
+     ya no sirve de nada en papel. */
+  details > summary { list-style: none; }
+  details > summary::marker, details > summary::-webkit-details-marker { display: none; }
 
   /* No partir por la mitad lo que se lee como una unidad. */
   pre, code, blockquote, table, .card { break-inside: avoid; page-break-inside: avoid; }

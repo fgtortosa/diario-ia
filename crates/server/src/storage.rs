@@ -486,6 +486,7 @@ impl Store {
                         metadata: metadata.and_then(|s| serde_json::from_str(&s).ok()),
                         created_at: parse_dt(&created).unwrap_or_else(Utc::now),
                         exported_at: exportada.as_deref().and_then(parse_dt),
+                        export_filename: String::new(),
                         tags: Vec::new(),
                         attachments: Vec::new(),
                     })
@@ -496,6 +497,9 @@ impl Store {
         let Some(mut entry) = entry else {
             return Ok(None);
         };
+        // Se rellena aqui, con la zona del servidor, que es la que usa el
+        // exportador al escribir el fichero.
+        entry.export_filename = diario_shared::nombre_fichero(&entry);
 
         let mut tstmt =
             conn.prepare("SELECT tag FROM entry_tag WHERE entry_id = ?1 ORDER BY tag")?;
@@ -846,6 +850,20 @@ mod tests {
         assert!(parse_dt("2026-09-17 18:30:48").is_some());
         assert!(parse_dt("2026-09-17T18:30:48+00:00").is_some());
         assert!(parse_dt("ni de lejos").is_none());
+    }
+
+    #[test]
+    fn get_entry_trae_el_nombre_del_fichero_de_exportacion() {
+        // El cliente usa este campo en vez de calcularlo: el nombre lleva la
+        // hora local, y calcularlo tambien en el navegador daria otro nombre si
+        // las zonas no coinciden.
+        let store = Store::in_memory().unwrap();
+        let id = store.create_entry(&sample_entry("mi-app", "Una"), Utc::now()).unwrap();
+
+        let entry = store.get_entry(id).unwrap().unwrap();
+
+        assert_eq!(entry.export_filename, diario_shared::nombre_fichero(&entry));
+        assert!(entry.export_filename.ends_with(&format!("-mi-app-{id}.md")));
     }
 
     #[test]

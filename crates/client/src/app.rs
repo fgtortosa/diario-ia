@@ -152,7 +152,7 @@ fn Sidebar(
                 }}
             </ul>
             <h2>"Etiquetas"</h2>
-            <ul class="applist">
+            <ul class="app-list">
                 {move || {
                     tags.get()
                         .into_iter()
@@ -345,16 +345,11 @@ fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
     let summary = e.task_summary.clone().filter(|s| !s.is_empty());
     let attachments = e.attachments.clone();
 
-    // Mismo esquema de nombre que los ficheros que escribe el exportador, para
-    // que descargar a mano y exportar automaticamente produzcan lo mismo.
-    let nombre_md = format!(
-        "{}-{}-{}.md",
-        e.created_at
-            .with_timezone(&chrono::Local)
-            .format("%Y%m%d-%H%M%S"),
-        e.application_slug,
-        e.id
-    );
+    // El nombre lo da el servidor, no se calcula aqui: lleva la hora local, y
+    // calcularlo tambien en el navegador daria otro nombre si las zonas no
+    // coinciden, rompiendo la garantia de que descargar a mano y exportar
+    // produzcan lo mismo.
+    let nombre_md = e.export_filename.clone();
     let md = markdown_de(&e);
     let id = e.id;
     let exportada = e.exported_at;

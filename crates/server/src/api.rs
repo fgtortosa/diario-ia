@@ -71,13 +71,14 @@ struct EstadoExportacion {
 /// sin escribir. La interfaz lo advierte.
 async fn set_exported(
     State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
     Path(id): Path<i64>,
     Json(cuerpo): Json<EstadoExportacion>,
 ) -> AppResult<Json<serde_json::Value>> {
     let store = state.store.clone();
     let existe = blocking(move || store.marcar_exportacion_manual(id, cuerpo.exported)).await?;
     state.config.traza(
-        "rest",
+        origen(&cabeceras),
         "marcar_exportacion",
         &format!("id={id} exportada={}", cuerpo.exported),
     );
@@ -105,21 +106,27 @@ fn origen(cabeceras: &axum::http::HeaderMap) -> &'static str {
     }
 }
 
-async fn list_tags(State(state): State<AppState>) -> AppResult<Json<Vec<TagCount>>> {
+async fn list_tags(
+    State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
+) -> AppResult<Json<Vec<TagCount>>> {
     let store = state.store.clone();
     let tags = blocking(move || store.contar_etiquetas()).await?;
     state
         .config
-        .traza("rest", "listar_etiquetas", &format!("n={}", tags.len()));
+        .traza(origen(&cabeceras), "listar_etiquetas", &format!("n={}", tags.len()));
     Ok(Json(tags))
 }
 
-async fn list_applications(State(state): State<AppState>) -> AppResult<Json<Vec<Application>>> {
+async fn list_applications(
+    State(state): State<AppState>,
+    cabeceras: axum::http::HeaderMap,
+) -> AppResult<Json<Vec<Application>>> {
     let store = state.store.clone();
     let apps = blocking(move || store.list_applications()).await?;
     state
         .config
-        .traza("rest", "listar_aplicaciones", &format!("n={}", apps.len()));
+        .traza(origen(&cabeceras), "listar_aplicaciones", &format!("n={}", apps.len()));
     Ok(Json(apps))
 }
 

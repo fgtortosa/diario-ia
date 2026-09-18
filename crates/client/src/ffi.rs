@@ -42,10 +42,28 @@ pub fn descargar_fichero(nombre: &str, contenido: &str) {
 
 /// Abre el dialogo de impresion del navegador, que es tambien el de "guardar
 /// como PDF". Ver la hoja @media print de styles.css.
+///
+/// Antes de imprimir despliega los <details> cerrados. Hace falta hacerlo aqui
+/// y no en CSS: el atributo `open` no se puede poner desde una hoja de estilos,
+/// y cambiar el `display` del <details> no revela su contenido. Medido en
+/// Chrome, un <details> cerrado en medio print tiene altura **cero**, asi que el
+/// prompt desaparecia entero del PDF en vez de salir desplegado.
+///
+/// Se dejan abiertos: quien imprime ha pedido el contenido, y volver a cerrarlos
+/// despues obligaria a adivinar cuando termina el dialogo del navegador.
 pub fn imprimir() {
-    if let Some(w) = web_sys::window() {
-        let _ = w.print();
+    let Some(w) = web_sys::window() else { return };
+    if let Some(doc) = w.document() {
+        if let Ok(lista) = doc.query_selector_all("details:not([open])") {
+            for i in 0..lista.length() {
+                if let Some(nodo) = lista.item(i) {
+                    let el: web_sys::Element = nodo.unchecked_into();
+                    let _ = el.set_attribute("open", "");
+                }
+            }
+        }
     }
+    let _ = w.print();
 }
 
 /// Ruta actual del navegador (para deep links tipo /entry/42).
