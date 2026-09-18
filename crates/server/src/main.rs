@@ -58,7 +58,11 @@ struct ServeArgs {
     #[arg(long, env = "DIARIO_DB", default_value = "diario.db")]
     db: String,
     /// URL publica base para los enlaces a entradas.
-    #[arg(long, env = "DIARIO_PUBLIC_URL", default_value = "http://localhost:8787")]
+    #[arg(
+        long,
+        env = "DIARIO_PUBLIC_URL",
+        default_value = "http://localhost:8787"
+    )]
     public_url: String,
     /// Token de lectura opcional (protege GET/SPA). Vacio = lectura libre.
     #[arg(long, env = "DIARIO_VIEWER_TOKEN")]
@@ -139,7 +143,10 @@ enum KeyAction {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    match cli.command.unwrap_or(Command::Serve(ServeArgs::parse_from(["diario"]))) {
+    match cli
+        .command
+        .unwrap_or(Command::Serve(ServeArgs::parse_from(["diario"])))
+    {
         Command::Serve(args) => run_server(args),
         Command::Mcp(args) => run_async(mcp::run(args.url, args.key)),
         Command::Key { action } => run_key(action),
@@ -180,7 +187,7 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
     let state = AppState {
         store,
         config: Arc::new(config.clone()),
-            avisar_exportador: Arc::new(tokio::sync::Notify::new()),
+        avisar_exportador: Arc::new(tokio::sync::Notify::new()),
     };
     run_async(async move {
         // Bucle del exportador. La primera vuelta se ejecuta antes del primer
@@ -202,7 +209,9 @@ fn run_server(args: ServeArgs) -> anyhow::Result<()> {
                     })
                     .await
                     {
-                        Ok(Ok(n)) if n > 0 => tracing::info!("exportadas {n} entradas al repositorio"),
+                        Ok(Ok(n)) if n > 0 => {
+                            tracing::info!("exportadas {n} entradas al repositorio")
+                        }
                         Ok(Err(e)) => tracing::warn!("fallo al exportar: {e}"),
                         Err(e) => tracing::warn!("el exportador se cayo: {e}"),
                         _ => {}
@@ -260,9 +269,17 @@ fn run_key(action: KeyAction) -> anyhow::Result<()> {
 
 fn run_repo(action: RepoAction) -> anyhow::Result<()> {
     match action {
-        RepoAction::Set { aplicacion, ruta, db } => {
+        RepoAction::Set {
+            aplicacion,
+            ruta,
+            db,
+        } => {
             let store = Store::open(&db)?;
-            let ruta_opt = if ruta.is_empty() { None } else { Some(ruta.as_str()) };
+            let ruta_opt = if ruta.is_empty() {
+                None
+            } else {
+                Some(ruta.as_str())
+            };
             if store.set_repo_path(&aplicacion, ruta_opt)? {
                 match ruta_opt {
                     Some(r) => println!("{aplicacion} -> {r}"),
@@ -320,7 +337,12 @@ fn run_export(args: ExportArgs) -> anyhow::Result<()> {
                 let mut f = std::fs::File::create(&path)?;
                 writeln!(f, "# {}\n", entry.title)?;
                 writeln!(f, "- Aplicacion: {}", entry.application_name)?;
-                writeln!(f, "- Agente: {} ({})", entry.agent_name, entry.model.as_deref().unwrap_or("-"))?;
+                writeln!(
+                    f,
+                    "- Agente: {} ({})",
+                    entry.agent_name,
+                    entry.model.as_deref().unwrap_or("-")
+                )?;
                 writeln!(f, "- Fecha: {}\n", entry.created_at.to_rfc3339())?;
                 writeln!(f, "## Prompt\n\n{}\n", entry.prompt)?;
                 if let Some(ts) = &entry.task_summary {

@@ -34,15 +34,24 @@ impl IntoResponse for AppError {
             AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
             AppError::Db(e) => {
                 tracing::error!(error = %e, "error de base de datos");
-                (StatusCode::INTERNAL_SERVER_ERROR, "error interno".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error interno".to_string(),
+                )
             }
             AppError::Pool(e) => {
                 tracing::error!(error = %e, "error de pool de conexiones");
-                (StatusCode::INTERNAL_SERVER_ERROR, "error interno".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error interno".to_string(),
+                )
             }
             AppError::Other(e) => {
                 tracing::error!(error = %e, "error interno");
-                (StatusCode::INTERNAL_SERVER_ERROR, "error interno".to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error interno".to_string(),
+                )
             }
         };
         (status, Json(json!({ "error": message }))).into_response()
