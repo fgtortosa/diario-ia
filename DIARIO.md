@@ -518,3 +518,54 @@ base real, con 0 errores de consola:
 `just clippy` estaba rojo desde el PR anterior por dos avisos del exportador (un import y
 un método que en producción ya no llama nadie). Corregidos: la puerta de lint del
 repositorio vuelve a pasar.
+
+---
+
+## 2026-09-18 09:50 — Revisión del PR #8: cuatro arreglos y un rechazo
+
+Copilot dejó cinco comentarios. Cuatro eran ciertos y están corregidos; el quinto no se
+sostiene en este código.
+
+**Lo corregido**
+
+- **La URL se comparaba en crudo.** Un enlace equivalente con los parámetros en otro orden
+  o con otro escape se consideraba distinto, así que al abrirlo se apilaba una entrada de
+  historial: pulsar atrás no deshacía ningún filtro, llevaba a otra URL con los mismos.
+  Ahora la comparación va sobre la query normalizada con `query_a`/`query_de`.
+- **`exported=true` se perdía.** El estado del cliente era un booleano («solo pendientes»),
+  así que un `exported=true` de la URL se convertía en «sin filtro», se borraba del enlace
+  y la lista salía con las pendientes incluidas diciendo lo contrario. Se guarda el
+  `Option<bool>` entero. Como la interfaz no genera ese valor —solo puede venir de la
+  URL—, se enseña con un chip «Solo exportadas ×»: un filtro activo e invisible hace que
+  la lista parezca incompleta sin motivo.
+- **Exportar y marcar no refrescaban la lista.** Con «Solo sin exportar» puesto, las
+  tarjetas ya exportadas seguían ahí hasta tocar otro filtro. Un contador dispara la
+  consulta actual. El matiz: el `Effect` volvía al listado con `anterior.is_some()`, así
+  que un refresco te habría sacado del detalle mientras lo leías; ahora compara el filtro
+  anterior con el actual y solo cambia de vista si el filtro cambió de verdad.
+- **Respuestas caducadas.** Cada tecla del buscador lanza su petición y cualquiera escribía
+  el resultado. Contador de generación en el listado y en el hilo: la que llega tarde ni
+  pinta ni apaga el indicador de carga.
+
+**Lo rechazado, y por qué**
+
+Ordenar el hilo por `created_at` en vez de por `id`. Comprobado antes de responder:
+`NewEntry` no tiene campo de fecha —la sella el servidor con `Utc::now()`—, la migración
+0002 no insertó entradas con fechas ajenas, y sobre la base real las 31 entradas están en
+RFC3339 UTC y `ORDER BY id` da la misma secuencia que `ORDER BY created_at`. Pero lo que
+pesa es que **el listado pagina con un cursor sobre el id**: cambiar el orden del hilo haría
+que las dos vistas discreparan sobre el mismo filtro. Queda documentado en `hilo()`, con la
+condición que obligaría a revisarlo (que algún día se pueda fechar una entrada desde fuera,
+y entonces habría que cambiar orden y cursor a la vez).
+
+**Verificación**
+
+54 tests, clippy en verde y comprobación en navegador con 0 errores de consola: la URL no
+se reescribe al abrir un enlace con los parámetros invertidos; `exported=true` viaja en la
+petición y sobrevive a cambiar otro filtro; marcar desde el detalle dispara una consulta
+nueva del listado **y** deja la vista donde estaba; y escribir «build» letra a letra sin
+esperar acaba coherente con la URL.
+
+La carrera de respuestas no la he reproducido: el servidor es local y responde en
+milisegundos, haría falta forzar una respuesta lenta. Lo comprobado es que el guardado no
+rompe el camino normal.
