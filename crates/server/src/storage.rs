@@ -19,6 +19,18 @@ use crate::render;
 const MIGRATION_0001: &str = include_str!("../../../migrations/0001_init.sql");
 const MIGRATION_0002: &str = include_str!("../../../migrations/0002_export.sql");
 
+/// Tope de entradas de un hilo.
+///
+/// El hilo devuelve las entradas **enteras**, no un fragmento como el listado,
+/// asi que una consulta sin filtros se traeria el diario completo a memoria y
+/// de ahi a un JSON. Es una ruta de lectura, y require_viewer no comprueba nada
+/// mientras no exista DIARIO_VIEWER_TOKEN.
+///
+/// Pasado el tope se devuelve un error en vez de cortar la lista: un hilo
+/// truncado en silencio le daria al agente media historia sin que nadie se
+/// entere. El hilo es para una busqueda acotada; si no cabe, se acota mas.
+const MAX_HILO: usize = 200;
+
 /// Separador de unidad (US) usado para agrupar tags con group_concat.
 const TAG_SEP: char = '\u{1f}';
 
@@ -217,13 +229,21 @@ impl Store {
                 sql.push_str(" WHERE ");
                 sql.push_str(&wheres.join(" AND "));
             }
-            sql.push_str(" ORDER BY e.id ASC");
+            // Se pide uno mas que el tope: si aparece, es que la consulta se
+            // pasa, y se sabe sin contar la tabla entera.
+            sql.push_str(&format!(" ORDER BY e.id ASC LIMIT {}", MAX_HILO + 1));
             let mut st = conn.prepare(&sql)?;
             let filas = st
                 .query_map(params_from_iter(args.iter()), |r| r.get(0))?
                 .collect::<Result<Vec<_>, _>>()?;
             filas
         };
+
+        if ids.len() > MAX_HILO {
+            return Err(AppError::BadRequest(format!(
+                "el hilo supera las {MAX_HILO} entradas: acota la busqueda por aplicacion, etiqueta o fechas"
+            )));
+        }
 
         let mut salida = Vec::with_capacity(ids.len());
         for id in ids {
@@ -910,6 +930,23 @@ mod tests {
 
         assert_eq!(entry.export_filename, diario_shared::nombre_fichero(&entry));
         assert!(entry.export_filename.ends_with(&format!("-mi-app-{id}.md")));
+    }
+
+    #[test]
+    fn el_hilo_se_niega_a_devolver_mas_del_tope() {
+        // Sin tope, /hilo sin filtros carga el diario entero -entradas completas,
+        // no fragmentos- en memoria. Se corta con un error y no truncando: un
+        // hilo recortado en silencio le da al agente media historia sin avisar.
+        let store = Store::in_memory().unwrap();
+        for i in 0..=MAX_HILO {
+            store
+                .create_entry(&sample_entry("mi-app", &format!("N{i}")), Utc::now())
+                .unwrap();
+        }
+
+        let err = store.hilo(&EntryQuery::default()).unwrap_err();
+
+        assert!(matches!(err, crate::error::AppError::BadRequest(_)));
     }
 
     #[test]
