@@ -54,14 +54,22 @@ fn ruta_de(view: View) -> String {
 /// dejar.
 fn sincronizar_url(view: View, query: &str) {
     let ruta = ruta_de(view);
+
+    // La comparacion va sobre la query **normalizada**, no sobre el texto. Un
+    // enlace escrito a mano con los parametros en otro orden o con otro escape
+    // -?tag=x&application=y, o %20 frente a +- significa exactamente lo mismo,
+    // y compararlo en crudo apilaria una entrada de historial que al pulsar
+    // atras no deshace ningun filtro: lleva a otra URL con los mismos filtros.
+    if current_path() == ruta && query_de(&query_a(&current_search())) == query {
+        return;
+    }
+
     let destino = if query.is_empty() {
         ruta
     } else {
         format!("{ruta}?{query}")
     };
-    if destino != format!("{}{}", current_path(), current_search()) {
-        push_path(&destino);
-    }
+    push_path(&destino);
 }
 
 /// Cambia de vista llevandose los filtros puestos.
@@ -83,10 +91,22 @@ pub fn App() -> impl IntoView {
     let search = RwSignal::new(inicial.q.clone().unwrap_or_default());
     let selected_tag = RwSignal::new(inicial.tag.clone());
     let tags = RwSignal::new(Vec::<TagCount>::new());
-    let solo_pendientes = RwSignal::new(inicial.exported == Some(false));
+    // Se guarda el Option<bool> entero y no un booleano: la API distingue
+    // "solo pendientes" (false) de "solo exportadas" (true), y quedarse con el
+    // booleano convertia un exported=true de la URL en "sin filtro", cambiando
+    // en silencio los resultados respecto a lo que pedia el enlace.
+    let filtro_export = RwSignal::new(inicial.exported);
     let entries = RwSignal::new(Vec::<EntrySummary>::new());
     let loading = RwSignal::new(false);
     let view = RwSignal::new(parse_route(&current_path()));
+    // Se incrementa cuando algo cambia los datos por debajo (exportar, marcar):
+    // los filtros siguen siendo los mismos, asi que sin esto la lista seguiria
+    // enseñando lo de antes hasta tocar otro filtro o recargar.
+    let refrescar = RwSignal::new(0u32);
+    // Ultima peticion lanzada. Cada cambio de filtro dispara la suya, y sin
+    // contador una respuesta lenta puede llegar despues de otra mas nueva y
+    // dejar la lista enseñando algo que no es lo que dice la URL.
+    let generacion = RwSignal::new(0u32);
 
     // Un solo sitio donde se juntan los filtros: lo leen el listado, el hilo y
     // la URL, asi que no pueden acabar diciendo cosas distintas.
@@ -96,7 +116,7 @@ pub fn App() -> impl IntoView {
         to: Some(to.get()).filter(|s| !s.is_empty()),
         q: Some(search.get()).filter(|s| !s.is_empty()),
         tag: selected_tag.get().filter(|s| !s.is_empty()),
-        exported: solo_pendientes.get().then_some(false),
+        exported: filtro_export.get(),
         ..Default::default()
     });
 
@@ -110,7 +130,7 @@ pub fn App() -> impl IntoView {
         to.set(q.to.clone().unwrap_or_default());
         search.set(q.q.clone().unwrap_or_default());
         selected_tag.set(q.tag.clone());
-        solo_pendientes.set(q.exported == Some(false));
+        filtro_export.set(q.exported);
     });
 
     spawn_local(async move {
@@ -125,45 +145,63 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    // Recarga las entradas cuando cambia cualquier filtro.
-    Effect::new(move |anterior: Option<()>| {
+    // Recarga las entradas cuando cambia cualquier filtro, o cuando algo ha
+    // tocado los datos.
+    Effect::new(move |anterior: Option<EntryQuery>| {
         let f = consulta.get();
+        let _ = refrescar.get();
+
+        // Un refresco de datos no es un cambio de filtro: no debe sacarte del
+        // detalle mientras lo estas leyendo.
+        let cambio_filtro = anterior.as_ref().is_some_and(|previo| *previo != f);
 
         // Al cambiar un filtro se vuelve al listado. Los resultados solo se
         // pintan en View::List, asi que desde el detalle se filtraba a ciegas:
         // la barra lateral y las fechas funcionaban, pero no se veia nada y
         // parecia que estaban rotas. El hilo si los pinta, y se queda.
         //
-        // La guarda 'anterior.is_some()' no es cosmetica: este Effect tambien
-        // corre al montar, y sin ella un enlace directo a /entry/N rebotaria al
+        // Comparar con el filtro anterior no es cosmetica: este Effect tambien
+        // corre al montar, y sin eso un enlace directo a /entry/N rebotaria al
         // listado antes de que se llegara a ver la entrada.
         //
         // view se lee sin rastrear a proposito: rastrearlo haria que el Effect
         // se reejecutara al cambiar de vista y, con el set de aqui dentro, seria
         // un bucle.
-        if anterior.is_some() && matches!(view.get_untracked(), View::Detail(_)) {
+        if cambio_filtro && matches!(view.get_untracked(), View::Detail(_)) {
             view.set(View::List);
         }
         sincronizar_url(view.get_untracked(), &query_de(&f));
 
+        let mia = generacion.get_untracked() + 1;
+        generacion.set(mia);
         loading.set(true);
+        let consultada = f.clone();
         spawn_local(async move {
-            match api::fetch_entries(&f).await {
+            let resultado = api::fetch_entries(&consultada).await;
+            // Si ya hay otra peticion mas nueva en vuelo, esta respuesta esta
+            // caducada: ni se pinta ni apaga el indicador de carga, que le toca
+            // a la que llegue la ultima.
+            if generacion.get_untracked() != mia {
+                return;
+            }
+            match resultado {
                 Ok(page) => entries.set(page.entries),
                 Err(_) => entries.set(Vec::new()),
             }
             loading.set(false);
         });
+
+        f
     });
 
     view! {
         <div class="app">
             <Header search=search selected_tag=selected_tag />
-            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag tags=tags solo_pendientes=solo_pendientes consulta=consulta view=view />
+            <Sidebar apps=apps selected_app=selected_app from=from to=to selected_tag=selected_tag tags=tags filtro_export=filtro_export consulta=consulta view=view refrescar=refrescar />
             <main class="main">
                 {move || match view.get() {
                     View::List => view! { <Timeline entries=entries loading=loading view=view selected_tag=selected_tag consulta=consulta /> }.into_any(),
-                    View::Detail(id) => view! { <EntryDetail id=id view=view consulta=consulta /> }.into_any(),
+                    View::Detail(id) => view! { <EntryDetail id=id view=view consulta=consulta refrescar=refrescar /> }.into_any(),
                     View::Hilo => view! { <HiloView consulta=consulta view=view /> }.into_any(),
                 }}
             </main>
@@ -203,9 +241,10 @@ fn Sidebar(
     to: RwSignal<String>,
     selected_tag: RwSignal<Option<String>>,
     tags: RwSignal<Vec<TagCount>>,
-    solo_pendientes: RwSignal<bool>,
+    filtro_export: RwSignal<Option<bool>>,
     consulta: Memo<EntryQuery>,
     view: RwSignal<View>,
+    refrescar: RwSignal<u32>,
 ) -> impl IntoView {
     let estado_export = RwSignal::new(String::new());
     view! {
@@ -283,11 +322,22 @@ fn Sidebar(
                 <label class="check">
                     <input
                         type="checkbox"
-                        prop:checked=move || solo_pendientes.get()
-                        on:change=move |ev| solo_pendientes.set(event_target_checked(&ev))
+                        prop:checked=move || filtro_export.get() == Some(false)
+                        on:change=move |ev| filtro_export
+                            .set(event_target_checked(&ev).then_some(false))
                     />
                     " Solo sin exportar"
                 </label>
+                // exported=true no lo genera la interfaz, solo puede venir de la
+                // URL. Se respeta, pero se enseña: un filtro activo e invisible
+                // hace que la lista parezca incompleta sin motivo.
+                {move || (filtro_export.get() == Some(true)).then(|| view! {
+                    <button
+                        class="btn-clear"
+                        title="Filtro puesto desde la URL (exported=true). Pulsa para quitarlo"
+                        on:click=move |_| filtro_export.set(None)
+                    >"Solo exportadas ×"</button>
+                })}
                 <button
                     class="btn-clear"
                     title="Escribe ahora los markdown que aun no se han volcado a los repositorios"
@@ -295,7 +345,14 @@ fn Sidebar(
                         estado_export.set("Exportando…".to_string());
                         spawn_local(async move {
                             match api::exportar_ahora().await {
-                                Ok((escritas, pendientes)) => estado_export.set(
+                                Ok((escritas, pendientes)) => {
+                                    // Lo exportado deja de estar pendiente: sin
+                                    // recargar, con "Solo sin exportar" puesto
+                                    // las tarjetas recien escritas seguian ahi.
+                                    if escritas > 0 {
+                                        refrescar.update(|n| *n += 1);
+                                    }
+                                    estado_export.set(
                                     if pendientes > 0 {
                                         format!("{escritas} escrita(s), {pendientes} sin destino")
                                     } else if escritas > 0 {
@@ -303,7 +360,8 @@ fn Sidebar(
                                     } else {
                                         "No quedaba nada".to_string()
                                     },
-                                ),
+                                )
+                                }
                                 Err(e) => estado_export.set(format!("Error: {e}")),
                             }
                         });
@@ -330,7 +388,7 @@ fn Sidebar(
                         from.set(String::new());
                         to.set(String::new());
                         selected_tag.set(None);
-                        solo_pendientes.set(false);
+                        filtro_export.set(None);
                     }
                 >
                     "Limpiar filtros"
@@ -422,7 +480,12 @@ fn entry_card(
 }
 
 #[component]
-fn EntryDetail(id: i64, view: RwSignal<View>, consulta: Memo<EntryQuery>) -> impl IntoView {
+fn EntryDetail(
+    id: i64,
+    view: RwSignal<View>,
+    consulta: Memo<EntryQuery>,
+    refrescar: RwSignal<u32>,
+) -> impl IntoView {
     let entry = RwSignal::new(Option::<Entry>::None);
 
     spawn_local(async move {
@@ -449,13 +512,13 @@ fn EntryDetail(id: i64, view: RwSignal<View>, consulta: Memo<EntryQuery>) -> imp
             </button>
             {move || match entry.get() {
                 None => view! { <p class="loading">"Cargando…"</p> }.into_any(),
-                Some(e) => detail_body(e, entry).into_any(),
+                Some(e) => detail_body(e, entry, refrescar).into_any(),
             }}
         </div>
     }
 }
 
-fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
+fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>, refrescar: RwSignal<u32>) -> impl IntoView {
     let date = e.created_at.format("%d/%m/%Y %H:%M").to_string();
     let model = e.model.clone().unwrap_or_else(|| "—".to_string());
     let meta = format!("{} · {}", e.agent_name, model);
@@ -503,6 +566,9 @@ fn detail_body(e: Entry, entry: RwSignal<Option<Entry>>) -> impl IntoView {
                             if let Ok(e) = api::fetch_entry(id).await {
                                 entry.set(Some(e));
                             }
+                            // Y la lista, que con el filtro de pendientes puesto
+                            // acaba de quedarse desfasada.
+                            refrescar.update(|n| *n += 1);
                         }
                     });
                 }
@@ -580,8 +646,10 @@ fn descripcion_filtros(q: &EntryQuery) -> String {
     if let Some(b) = &q.q {
         partes.push(format!("\"{b}\""));
     }
-    if q.exported == Some(false) {
-        partes.push("sin exportar".to_string());
+    match q.exported {
+        Some(false) => partes.push("sin exportar".to_string()),
+        Some(true) => partes.push("ya exportadas".to_string()),
+        None => {}
     }
     if partes.is_empty() {
         "todo el diario".to_string()
@@ -641,13 +709,23 @@ fn HiloView(consulta: Memo<EntryQuery>, view: RwSignal<View>) -> impl IntoView {
     let error = RwSignal::new(String::new());
     let cargando = RwSignal::new(true);
     let aviso = RwSignal::new(String::new());
+    // Escribiendo en el buscador sale una peticion por tecla. Sin contador, una
+    // respuesta lenta puede llegar detras de otra mas nueva y dejar el hilo
+    // enseñando entradas que no son las que pide la URL.
+    let generacion = RwSignal::new(0u32);
 
     Effect::new(move |_| {
         let q = consulta.get();
+        let mia = generacion.get_untracked() + 1;
+        generacion.set(mia);
         cargando.set(true);
         aviso.set(String::new());
         spawn_local(async move {
-            match api::fetch_hilo(&q).await {
+            let resultado = api::fetch_hilo(&q).await;
+            if generacion.get_untracked() != mia {
+                return;
+            }
+            match resultado {
                 Ok(v) => {
                     entradas.set(v);
                     error.set(String::new());

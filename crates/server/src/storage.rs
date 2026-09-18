@@ -234,6 +234,15 @@ impl Store {
                 sql.push_str(" WHERE ");
                 sql.push_str(&wheres.join(" AND "));
             }
+            // Por id y no por created_at, a proposito. El id es el orden de
+            // insercion, y aqui coincide con el cronologico porque created_at
+            // lo sella el servidor (Utc::now en el handler; NewEntry no tiene
+            // ese campo, asi que nadie puede fecharla desde fuera). Ademas el
+            // listado pagina con un cursor sobre el id: ordenar el hilo por
+            // otra cosa haria que las dos vistas discreparan sobre el mismo
+            // filtro. Si algun dia se pudiera fechar una entrada desde fuera,
+            // esto hay que revisarlo junto con el cursor del listado.
+            //
             // Se pide uno mas que el tope: si aparece, es que la consulta se
             // pasa, y se sabe sin contar la tabla entera.
             sql.push_str(&format!(" ORDER BY e.id ASC LIMIT {}", MAX_HILO + 1));
