@@ -60,6 +60,7 @@ pub fn markdown_de(entry: &Entry) -> String {
 pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::Result<usize> {
     let mut marcadas = 0usize;
     let mut despues_de = None;
+    let mut sin_destino = 0usize;
 
     loop {
         let pendientes = store.entradas_pendientes_despues(200, despues_de)?;
@@ -84,12 +85,13 @@ pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::R
             // recupera si mas tarde se registra el repositorio. Pero sin avisar seria
             // silencioso, y con la configuracion por defecto -sin --tareas-dir y sin
             // repo set- se acumularia todo sin escribir nada y sin que nadie lo note.
+            //
+            // Se cuenta y se avisa UNA vez al terminar la pasada, no una por
+            // entrada: cada entrada nueva dispara una pasada que recorre todas
+            // las pendientes, asi que avisar por entrada hace que el volumen de
+            // log crezca con el cuadrado del historico.
             if destinos.is_empty() {
-                tracing::warn!(
-                "la entrada {} no tiene donde exportarse: la aplicacion '{}' no tiene repositorio registrado (diario repo set) y no hay directorio central (DIARIO_TAREAS_DIR). Queda pendiente.",
-                entrada.id,
-                entrada.application_slug
-            );
+                sin_destino += 1;
             }
 
             let mut todos_ok = !destinos.is_empty();
@@ -111,6 +113,12 @@ pub fn exportar_pendientes(store: &Store, tareas_dir: Option<&str>) -> anyhow::R
                 marcadas += 1;
             }
         }
+    }
+
+    if sin_destino > 0 {
+        tracing::warn!(
+            "{sin_destino} entrada(s) sin donde exportarse: sus aplicaciones no tienen repositorio registrado (diario repo set) y no hay directorio central (DIARIO_TAREAS_DIR). Quedan pendientes."
+        );
     }
 
     Ok(marcadas)
