@@ -216,3 +216,58 @@ pub fn nombre_fichero(entry: &Entry) -> String {
         entry.id
     )
 }
+
+/// Filtros -> query string, sin el `?`. Cadena vacia si no hay ninguno.
+///
+/// La misma funcion construye la URL del navegador y la de la API, asi que
+/// `/hilo?application=x&tag=y` y `/api/v1/hilo?application=x&tag=y` llevan
+/// **la misma** query por construccion: lo que ves en la barra de direcciones
+/// es lo que le puedes pasar a curl o a un agente.
+pub fn query_de(q: &EntryQuery) -> String {
+    serde_urlencoded::to_string(q).unwrap_or_default()
+}
+
+/// Query string -> filtros. Acepta el `?` inicial y perdona lo que no entienda:
+/// una URL escrita a mano con un parametro de mas no debe dejar la pagina en
+/// blanco.
+pub fn query_a(s: &str) -> EntryQuery {
+    serde_urlencoded::from_str(s.trim_start_matches('?')).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn la_query_omite_los_filtros_vacios() {
+        let q = EntryQuery {
+            application: Some("redes-ice-netcore".into()),
+            ..Default::default()
+        };
+        assert_eq!(query_de(&q), "application=redes-ice-netcore");
+        assert_eq!(query_de(&EntryQuery::default()), "");
+    }
+
+    #[test]
+    fn la_query_va_y_vuelve_sin_perder_nada() {
+        // Es lo que hace navegable la vista: la URL tiene que reconstruir la
+        // busqueda entera, con espacios y acentos incluidos.
+        let q = EntryQuery {
+            application: Some("diario-ia".into()),
+            tag: Some("build".into()),
+            from: Some("2026-09-01".into()),
+            to: Some("2026-09-18".into()),
+            q: Some("exportacion & marcado".into()),
+            exported: Some(false),
+            ..Default::default()
+        };
+
+        assert_eq!(query_a(&format!("?{}", query_de(&q))), q);
+    }
+
+    #[test]
+    fn una_query_con_basura_no_rompe_la_pagina() {
+        let q = query_a("?tag=build&loquesea=1");
+        assert_eq!(q.tag.as_deref(), Some("build"));
+    }
+}
