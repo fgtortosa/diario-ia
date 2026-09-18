@@ -9,7 +9,7 @@
 //! pasada lo escribe.
 
 use crate::storage::Store;
-use diario_shared::{markdown_de, nombre_fichero, Entry};
+use diario_shared::{markdown_de, nombre_fichero};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -132,8 +132,8 @@ mod tests {
     use chrono::TimeZone;
 
     // Entry no deriva Default, asi que se construye entera.
-    fn entrada_de_prueba() -> Entry {
-        Entry {
+    fn entrada_de_prueba() -> diario_shared::Entry {
+        diario_shared::Entry {
             id: 19,
             application_slug: "redes-ice-netcore".into(),
             application_name: "redes-ice-netcore".into(),

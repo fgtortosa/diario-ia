@@ -152,6 +152,11 @@ impl Store {
     /// Se resuelven en dos pasos —primero los ids, luego get_entry— porque
     /// get_entry pide su propia conexion del pool y mantener abierto el
     /// statement mientras tanto agotaria el pool con una sola conexion.
+    ///
+    /// Solo la usan los tests: el exportador recorre la cola con
+    /// entradas_pendientes_despues para que una entrada que falla no bloquee a
+    /// las siguientes.
+    #[cfg(test)]
     pub fn entradas_pendientes(&self, limite: usize) -> AppResult<Vec<Entry>> {
         self.entradas_pendientes_despues(limite, None)
     }
